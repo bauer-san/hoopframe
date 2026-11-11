@@ -446,6 +446,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const SEED = (() => { const m = /seed-(\d+)/.exec(location.hash); return m ? (+m[1] >>> 0) : 20261111; })();
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const rng = mulberry32(SEED);
+// Cosmetic randomness (floor planks, crowd, textures) has its own fixed seed: identical on every load, independent of the game seed.
+const vrandom = mulberry32(0x9e3779b9);
 const rand = (a, b) => a + rng() * (b - a);
 const pick = (arr) => arr[(rng() * arr.length) | 0];
 const gauss = () => { let u = 0, v = 0; while (!u) u = rng(); while (!v) v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
@@ -522,23 +524,23 @@ function makeCourtTextures() {
   gr.fillStyle = 'rgb(105,105,105)'; gr.fillRect(0, 0, r.width, r.height);
   const bw = 0.057 * S;                                   // 2¼-inch maple strips
   for (let row = 0; row * bw < c.height; row++) {
-    let x = -Math.random() * 2 * S;
+    let x = -vrandom() * 2 * S;
     while (x < c.width) {
-      const len = (0.9 + Math.random() * 2.4) * S;
-      const l = 63 + Math.random() * 6, hue = 33 + Math.random() * 5, sat = 34 + Math.random() * 10;
+      const len = (0.9 + vrandom() * 2.4) * S;
+      const l = 63 + vrandom() * 6, hue = 33 + vrandom() * 5, sat = 34 + vrandom() * 10;
       g.fillStyle = `hsl(${hue}, ${sat}%, ${l}%)`;
       g.fillRect(x, row * bw, len, bw);
       // grain streaks
       for (let k = 0; k < 3; k++) {
-        g.strokeStyle = `hsla(${hue - 4}, ${sat}%, ${l - 14}%, ${0.08 + Math.random() * 0.1})`;
-        g.lineWidth = 0.6 + Math.random();
-        const yy = row * bw + Math.random() * bw;
+        g.strokeStyle = `hsla(${hue - 4}, ${sat}%, ${l - 14}%, ${0.08 + vrandom() * 0.1})`;
+        g.lineWidth = 0.6 + vrandom();
+        const yy = row * bw + vrandom() * bw;
         g.beginPath(); g.moveTo(x, yy);
         for (let s = 0; s <= 6; s++) g.lineTo(x + (len * s) / 6, yy + Math.sin(s * 1.7 + row) * 0.8);
         g.stroke();
       }
       g.fillStyle = 'rgba(60,32,12,0.22)'; g.fillRect(x, row * bw, 1.2, bw);
-      const rv = (90 + Math.random() * 40) | 0;
+      const rv = (90 + vrandom() * 40) | 0;
       gr.fillStyle = `rgb(${rv},${rv},${rv})`;
       gr.fillRect(x / 2, (row * bw) / 2, len / 2, bw / 2);
       x += len;
@@ -676,8 +678,8 @@ function ledTexture(text, bg, fg) {
       if (axis === 'z') seat.position.set(0, top + 0.2, sign * (d + 0.1)); else seat.position.set(sign * (d + 0.1), top + 0.2, 0);
       scene.add(seat);
       for (let s = -length / 2 + 0.4; s < length / 2 - 0.3; s += 0.56) {
-        if (Math.random() < 0.12) continue;
-        const j = (Math.random() - 0.5) * 0.08;
+        if (vrandom() < 0.12) continue;
+        const j = (vrandom() - 0.5) * 0.08;
         fans.push(axis === 'z' ? [s + j, top + 0.26, sign * (d + 0.08)] : [sign * (d + 0.08), top + 0.26, s + j]);
       }
     }
@@ -692,13 +694,13 @@ function ledTexture(text, bg, fg) {
   const skins = [0x5a3825, 0x7a4e33, 0x8d5a3b, 0xa8754f, 0xc89a72, 0xe0b48f];
   const m4 = new THREE.Matrix4(), col = new THREE.Color();
   fans.forEach((p, i) => {
-    const h = 0.92 + Math.random() * 0.16;
+    const h = 0.92 + vrandom() * 0.16;
     m4.makeScale(1, h, 1).setPosition(p[0], p[1] + 0.3 * h, p[2]);
     bodies.setMatrixAt(i, m4);
-    bodies.setColorAt(i, col.setHex(shirts[(Math.random() * shirts.length) | 0]).multiplyScalar(0.55 + Math.random() * 0.45));
+    bodies.setColorAt(i, col.setHex(shirts[(vrandom() * shirts.length) | 0]).multiplyScalar(0.55 + vrandom() * 0.45));
     m4.makeTranslation(p[0], p[1] + 0.78 * h, p[2]);
     heads.setMatrixAt(i, m4);
-    heads.setColorAt(i, col.setHex(skins[(Math.random() * skins.length) | 0]));   // crowd is cosmetic: kept off the seeded game RNG
+    heads.setColorAt(i, col.setHex(skins[(vrandom() * skins.length) | 0]));   // crowd is cosmetic: visual RNG, not the game RNG
   });
   scene.add(bodies, heads);
 
@@ -801,8 +803,8 @@ function makeBallTextures() {
   g.fillStyle = '#c25a1c'; g.fillRect(0, 0, W, H);
   gb.fillStyle = '#808080'; gb.fillRect(0, 0, W, H);
   for (let i = 0; i < 60000; i++) {
-    const x = Math.random() * W, y = Math.random() * H, r = 1 + Math.random() * 1.6;
-    g.fillStyle = Math.random() < 0.5 ? 'rgba(80,25,5,0.10)' : 'rgba(255,170,110,0.07)';
+    const x = vrandom() * W, y = vrandom() * H, r = 1 + vrandom() * 1.6;
+    g.fillStyle = vrandom() < 0.5 ? 'rgba(80,25,5,0.10)' : 'rgba(255,170,110,0.07)';
     g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
     gb.fillStyle = 'rgba(255,255,255,0.35)'; gb.beginPath(); gb.arc(x, y, r, 0, 7); gb.fill();
   }
@@ -843,7 +845,7 @@ function jerseyTexture(t, num) {
   const c = document.createElement('canvas'); c.width = 512; c.height = 256;
   const g = c.getContext('2d');
   g.fillStyle = t.jersey; g.fillRect(0, 0, 512, 256);
-  for (let i = 0; i < 9000; i++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)'; g.fillRect(Math.random() * 512, Math.random() * 256, 1.5, 1.5); }
+  for (let i = 0; i < 9000; i++) { g.fillStyle = vrandom() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)'; g.fillRect(vrandom() * 512, vrandom() * 256, 1.5, 1.5); }
   g.fillStyle = t.trim; g.fillRect(0, 0, 512, 12);
   g.fillRect(122, 0, 12, 256); g.fillRect(378, 0, 12, 256);
   g.textAlign = 'center'; g.textBaseline = 'alphabetic';
@@ -1384,6 +1386,9 @@ function simStep(dt) {
     }
   }
 
+  // gait phase advances on the game clock, so a seed replays identical leg motion
+  for (const p of players) p.stride += dt * (2 + p.speed * 1.9);
+
   // body separation
   for (let a = 0; a < players.length; a++) for (let b = a + 1; b < players.length; b++) {
     const p = players[a], q = players[b];
@@ -1403,7 +1408,6 @@ function simStep(dt) {
 function animate(p, dt) {
   const r = p.rig;
   const a = clamp(p.speed / 5, 0, 1);
-  p.stride += dt * (2 + p.speed * 1.9);
   const sn = Math.sin(p.stride), cs = Math.cos(p.stride);
 
   // locomotion base
@@ -2382,7 +2386,14 @@ for (const p of players) animate(p, 1);
 const testState = () => ({ t: r4(GM.simTime), score: stats.pts.slice(), fga: stats.fga, fgm: stats.fgm, phase: GM.phase, off: GM.off, events: eventSeq, ball: v3(BALL.pos) });
 window.hoopframe = {
   advance(seconds) { for (let i = 0; i < seconds / STEP; i++) simStep(STEP); return testState(); },
-  advanceTo(t) { while (GM.simTime < t - 1e-9) simStep(STEP); return testState(); },
+  advanceTo(t, withAnimation = false) {
+    while (GM.simTime < t - 1e-9) {
+      simStep(STEP);
+      if (withAnimation) { for (const p of players) animate(p, STEP); ballMesh.position.copy(BALL.pos); animateNet(STEP); updateCameras(STEP); }
+    }
+    return testState();
+  },
+  pose() { return players.map(playerState); },
   profile() {
     const time = (fn) => { const t0 = performance.now(); fn(); return +(performance.now() - t0).toFixed(1); };
     return { snapshot_ms: time(() => snapshot(0, false)), snapshot_with_2d_ms: time(() => snapshot(0, true)), render_ms: time(render), json_kb: +(JSON.stringify(snapshot(0, true)).length / 1024).toFixed(1) };

@@ -183,6 +183,12 @@ for k, g in enumerate(gt):
 The game logic runs on a seeded generator. The same seed gives the same game, event for event, at any
 simulation time, independent of frame rate or recording. Set the seed in **Data out → Reproducibility**,
 or open the page with `#seed-123` in the URL. Pressing **Shoot now** changes the game from that point on.
+Running gait is driven by the game clock too, so body poses replay exactly.
+
+Cosmetic detail (floor planks, crowd, ball and jersey textures) uses its own fixed seed, so every page load
+looks the same. Long recordings can therefore be rendered in separate pieces and joined. Start each piece
+with `hoopframe.advanceTo(start - 0.5)`, then `hoopframe.advanceTo(start, true)`, which runs the last half
+second with animation. Poses at the seam then match an unbroken run to within a fraction of a millimetre.
 
 ## Limitations
 
