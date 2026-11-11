@@ -485,9 +485,9 @@ scene.fog = new THREE.Fog(0x07090c, 38, 85);
 (function buildEnvironment() {
   const pm = new THREE.PMREMGenerator(renderer);
   const es = new THREE.Scene();
-  const room = new THREE.Mesh(new THREE.BoxGeometry(70, 34, 50), new THREE.MeshBasicMaterial({ color: 0x0b0d11, side: THREE.BackSide }));
+  const room = new THREE.Mesh(new THREE.BoxGeometry(70, 34, 50), new THREE.MeshBasicMaterial({ color: 0x15181e, side: THREE.BackSide }));
   room.position.y = 15; es.add(room);
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(30, 22, 9, 40, 1, true), new THREE.MeshBasicMaterial({ color: 0x2b2622, side: THREE.BackSide }));
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(30, 22, 9, 40, 1, true), new THREE.MeshBasicMaterial({ color: 0x4a423a, side: THREE.BackSide }));   // the lit crowd bowl
   band.position.y = 4.5; es.add(band);
   const fl = new THREE.Mesh(new THREE.PlaneGeometry(32, 19), new THREE.MeshBasicMaterial({ color: 0x9a6a3c }));
   fl.rotation.x = -Math.PI / 2; es.add(fl);
@@ -495,12 +495,19 @@ scene.fog = new THREE.Fog(0x07090c, 38, 85);
   for (let x = -12; x <= 12; x += 6) for (const z of [-6, 0, 6]) {
     const l = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.2, 1.0), lm); l.position.set(x, 17, z); es.add(l);
   }
+  // catwalk ring: angled sports lights 30-50 degrees up, which is what lights faces and jerseys in a real arena
+  const cm = new THREE.MeshBasicMaterial({ color: new THREE.Color(1, 0.97, 0.92).multiplyScalar(3) });
+  for (let a = 0; a < 16; a++) {
+    const th = a / 16 * Math.PI * 2, f = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.2, 0.3), cm);
+    f.position.set(Math.cos(th) * 21, 13.5, Math.sin(th) * 15); f.lookAt(0, 0, 0); es.add(f);
+  }
   scene.environment = pm.fromScene(es, 0.02).texture;
   pm.dispose();
 })();
 
-scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a2a1c, 0.35));
-const key = new THREE.DirectionalLight(0xfff3e2, 2.6);
+// sky: the light grid and catwalks; ground: warm bounce off the maple floor, which lights players from below
+scene.add(new THREE.HemisphereLight(0xe6edff, 0x8a5c36, 0.55));
+const key = new THREE.DirectionalLight(0xfff3e2, 2.3);
 key.position.set(8, 30, 4);
 key.target.position.set(6, 0, 0);
 key.castShadow = true;
@@ -513,6 +520,11 @@ scene.add(key, key.target);
 const rimLight = new THREE.DirectionalLight(0xc8dcff, 0.6);
 rimLight.position.set(-10, 12, -14);
 scene.add(rimLight);
+// shadowless fills from the catwalks on both sidelines and behind the basket: vertical illuminance on players
+for (const [x, y, z, i] of [[6, 13, -17, 0.85], [6, 13, 17, 0.6], [24, 11, 0, 0.45]]) {
+  const f = new THREE.DirectionalLight(0xfff6ea, i); f.position.set(x, y, z); f.target.position.set(6, 1.2, 0);
+  scene.add(f, f.target);
+}
 
 /* ---------- maple floor: colour, roughness, painted markings ---------- */
 function makeCourtTextures() {
@@ -867,7 +879,7 @@ const geoCache = {};
 const cyl = (r0, r1, h, seg = 14) => (geoCache[`c${r0},${r1},${h}`] ||= new THREE.CylinderGeometry(r0, r1, h, seg, 1).translate(0, -h / 2, 0));
 const torsoGeo = new THREE.LatheGeometry([
   [0.165, 0], [0.163, 0.08], [0.17, 0.2], [0.195, 0.33], [0.205, 0.44], [0.19, 0.52], [0.14, 0.575], [0.075, 0.6],
-].map(([r, y]) => new THREE.Vector2(r, y)), 28, Math.PI);
+].map(([r, y]) => new THREE.Vector2(r, y)), 40);   // full revolution: a closed shell, lit on its outside from every side
 torsoGeo.scale(1, 1, 0.66);
 const shortsGeo = new THREE.CylinderGeometry(0.205, 0.245, 0.42, 24, 1, true).translate(0, -0.13, 0).scale(1, 1, 0.74);
 const shoeGeo = new THREE.CapsuleGeometry(0.052, 0.17, 4, 10).rotateX(Math.PI / 2).scale(1.05, 0.72, 1);
@@ -880,8 +892,8 @@ const jointGeo = new THREE.SphereGeometry(1, 14, 10);
 function makeAthlete(team, num) {
   const t = TEAMS[team];
   const skin = new THREE.MeshPhysicalMaterial({ color: pick(SKIN), roughness: 0.5, sheen: 0.25, sheenColor: new THREE.Color(0xffd0b0), clearcoat: 0.08 });
-  const jersey = new THREE.MeshPhysicalMaterial({ map: jerseyTexture(t, num), roughness: 0.78, sheen: 0.6, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide });
-  const shorts = new THREE.MeshPhysicalMaterial({ map: shortsTexture(t), roughness: 0.75, sheen: 0.6, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide });
+  const jersey = new THREE.MeshPhysicalMaterial({ map: jerseyTexture(t, num), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff) });
+  const shorts = new THREE.MeshPhysicalMaterial({ map: shortsTexture(t), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide });
   const sockMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.9 });
   const shoeMat = new THREE.MeshPhysicalMaterial({ color: t.shoe, roughness: 0.4, clearcoat: 0.5 });
   const soleMat = new THREE.MeshStandardMaterial({ color: t.sole, roughness: 0.6 });
