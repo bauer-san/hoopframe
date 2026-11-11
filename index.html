@@ -600,7 +600,7 @@ function makeCourtTextures() {
 const courtTex = makeCourtTextures();
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(32, 19), new THREE.MeshPhysicalMaterial({
   map: courtTex.map, roughnessMap: courtTex.rough, roughness: 1.0, metalness: 0,
-  clearcoat: 0.55, clearcoatRoughness: 0.1, envMapIntensity: 0.6,
+  clearcoat: 0.5, clearcoatRoughness: 0.28, envMapIntensity: 0.6,
 }));
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
@@ -623,6 +623,7 @@ const reflector = new Reflector(new THREE.PlaneGeometry(32, 19), {
         vec3 c = texture2D(tDiffuse, uv).rgb * 0.36
           + (texture2D(tDiffuse, uv + vec2(0.0, o.y)).rgb + texture2D(tDiffuse, uv - vec2(0.0, o.y)).rgb
           +  texture2D(tDiffuse, uv + vec2(o.x, 0.0)).rgb + texture2D(tDiffuse, uv - vec2(o.x, 0.0)).rgb) * 0.16;
+        c = min(c, vec3(1.0));   // cap HDR highlights (light rigs) so they don't bloom into blobs on the floor
         vec3 v = normalize(cameraPosition - vWorld);
         float f = 0.05 + 0.6 * pow(1.0 - clamp(v.y, 0.0, 1.0), 4.0);
         gl_FragColor = vec4(c * f, f * 0.15);   // premultiplied: adds the reflection, only slightly masks the wood
@@ -1023,6 +1024,8 @@ function assignSpots(team) {
 
 function giveBall(p, changed, how = 'catch') {
   const prevTeam = GM.off;
+  // a rebound caught off the rim/board before the ball reaches the floor still ends the shot as a miss
+  if (shot.active && !shot.done && BALL.mode === 'free') finishShot(false);
   GM.off = p.team; GM.handler = p;
   BALL.mode = 'held'; BALL.holder = p; BALL.pass = null;
   GM.phase = 'play'; GM.driving = false; GM.looseT = 0;

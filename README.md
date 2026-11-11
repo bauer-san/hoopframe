@@ -6,6 +6,12 @@ multi-view player tracking and shot attribution in two ways:
 - **Live feed over MQTT**: ball, player and camera state, plus game events, published every tick.
 - **Synchronized recorder**: one MP4 per camera, frame-locked to per-frame ground truth, saved as a ZIP.
 
+[![Four fixed cameras recording the same 12 seconds of play](docs/sample.gif)](docs/sample.mp4)
+
+*12 seconds from the built-in recorder: four fixed cameras, 640 × 360 each, 30 fps, seed `20261111`,
+simulation time 24–36 s. HAR-8 misses a three, HAR-11 grabs the offensive rebound and scores from 2.5 m.
+Click for the [full-quality MP4](docs/sample.mp4).*
+
 Everything is in `index.html`. Open it directly in **Chrome or Edge**: double-click it, or serve the folder with
 `python3 -m http.server`. The hosted artifact preview blocks network connections and downloads, so MQTT
 and recording only work from this file.
