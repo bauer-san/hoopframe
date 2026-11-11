@@ -182,10 +182,12 @@ for k, g in enumerate(gt):
 ## Camera layouts
 
 Open the page with `#cams-gym` in the URL (with a seed: `#seed-123&cams-gym`) to replace the four default cameras
-with the fixed cameras of a real gym: two per end on the backboard supports, a wide one (NL, NR) viewing its own
-half and a narrow one (FL, FR) viewing the far end, all at 1920 × 1080. That gym's court is shorter (21.4 m), so each
-camera keeps its distance and angle to the baseline it views and is moved to the attacked end; players appear at the
-size and angle they have in the real footage. **Reset this camera** returns to the layout's position.
+with the fixed cameras of a real gym at their true places, all at 1920 × 1080: two on each backboard support, a wide
+one viewing its own half (NL, NR) and a narrow one viewing the far half (FL on the right support, FR on the left).
+Play is on the +x half only, so NL and FL view an empty half. Positions are relative to each camera's backboard.
+That gym's court is shorter (21.4 m), so the narrow cameras stand 26.4 m instead of 20.4 m from the far baseline,
+framing it as in the gym; players there look about 23 % smaller than in its footage. **Reset this camera** returns
+to the layout's position.
 
 ## Reproducibility
 

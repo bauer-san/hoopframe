@@ -1494,18 +1494,20 @@ function animate(p, dt) {
    Cameras
    ========================================================= */
 // Camera layouts, picked with #cams-<name> in the URL (combine with a seed: #seed-123&cams-gym).
-// gym: the four fixed cameras of a real gym, two per end on the backboard supports: a wide one viewing
-// its own half and a narrow one viewing the far end. Its court is shorter (21.4 m), so each camera keeps its
-// distance and angle to the baseline it views, moved to the attacked end here; players then appear at the size and
-// angle they have in the real footage. The wide cameras sit 8.5 cm in front of the backboard (the real ones look over
-// its top edge; NR's calibrated 3.5 cm behind it put the board across the image). Pinhole at 1920 × 1080, the
-// undistorted frames a detector gets.
+// gym: the four fixed cameras of a real gym at their true places, two on each backboard support: a wide one viewing
+// its own half (NL, NR) and a narrow one viewing the far half (FL on the right support, FR on the left). Only the
+// attacked half (+x) has play, so NL and FL view an empty half, as half the cameras would in the gym. Positions are
+// relative to the backboard each camera is mounted on. That gym's court is shorter (21.4 m), so the narrow cameras
+// are 26.4 m from the far baseline instead of 20.4 m; they are aimed to frame the far end as in the gym, and players
+// there appear about 23 % smaller than in its footage. The wide cameras sit 8.5 cm in front of their backboard (the
+// real ones look over its top edge; NR's calibrated 8.5 cm behind it put the board across the image).
+// Pinhole at 1920 × 1080, the undistorted frames a detector gets.
 const LAYOUTS = {
   gym: [
-    { name: 'NL Wide', pos: [13.02, 3.81, 0.05], target: [10.8, 0, 0.03], fov: 76.9, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
-    { name: 'FL Narrow', pos: [-6.21, 4.16, 0.19], target: [14, 0.735, -1.185], fov: 29.6, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
-    { name: 'NR Wide', pos: [13.02, 4.05, -0.02], target: [10.36, 0, 0.35], fov: 73.5, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
-    { name: 'FR Narrow', pos: [-6.04, 4.06, -0.02], target: [14, 0.884, 0.332], fov: 30.2, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'NL Wide', pos: [-13.021, 3.807, -0.048], target: [-10.805, 0, -0.032], fov: 76.9, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'FL Narrow', pos: [13.44, 4.162, -0.194], target: [-14, 0.568, 1.251], fov: 29.6, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'NR Wide', pos: [13.021, 4.05, -0.016], target: [10.359, 0, 0.354], fov: 73.5, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'FR Narrow', pos: [-13.271, 4.057, -0.023], target: [14, 0.689, 0.35], fov: 30.2, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
   ],
 };
 const LAYOUT = (() => { const m = /cams-(\w+)/.exec(location.hash); return m && LAYOUTS[m[1]] ? m[1] : null; })();
