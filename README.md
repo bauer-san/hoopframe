@@ -8,7 +8,8 @@ multi-view player tracking and shot attribution in two ways:
 
 [![Four fixed cameras recording the same 12 seconds of play](docs/sample.gif)](docs/sample.mp4)
 
-*12 seconds from the built-in recorder: four fixed cameras, 640 × 360 each, 30 fps, seed `20261111`,
+*12 seconds from the built-in recorder: four fixed cameras, 640 × 360 each, 30 fps, 180° shutter (1/60 s,
+4 sub-frames per frame), seed `20261111`,
 simulation time 24–36 s. HAR-8 misses a three, HAR-11 grabs the offensive rebound and scores from 2.5 m.
 Click for the [full-quality MP4](docs/sample.mp4).*
 
@@ -194,9 +195,10 @@ second with animation. Poses at the seam then match an unbroken run to within a 
 
 - WebCodecs and the MP4 muxer need a current Chromium-based browser. The ZIP is built in memory: at 8 Mbps,
   four 720p cameras for 60 s come to roughly 250 MB of video, plus about 30 KB of ground truth per frame.
-- The images are synthetic. Players are procedurally animated, not motion-captured. There is no lens
-  distortion, motion blur or sensor noise, so expect a domain gap against real broadcast footage. The
-  per-frame calibration and labels let you add those effects in post-processing.
+- The images are synthetic. Players are procedurally animated, not motion-captured. Motion blur is
+  rendered (see [Shutter and motion blur](#shutter-and-motion-blur)), but there is no lens distortion,
+  rolling shutter or sensor noise, so expect a domain gap against real broadcast footage. The per-frame
+  calibration and labels let you add those effects in post-processing.
 - `window.hoopframe.advance(s)`, `advanceTo(t)` and `profile()` are test hooks for fast-forwarding and
   timing the simulation. They do not render or record.
 
