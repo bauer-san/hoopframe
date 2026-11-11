@@ -161,3 +161,7 @@ or open the page with `#seed-123` in the URL. Pressing **Shoot now** changes the
   per-frame calibration and labels let you add those effects in post-processing.
 - `window.hoopframe.advance(s)`, `advanceTo(t)` and `profile()` are test hooks for fast-forwarding and
   timing the simulation. They do not render or record.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Three.js, mqtt.js and mp4-muxer load from jsDelivr at runtime and are MIT licensed by their authors.
