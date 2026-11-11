@@ -375,17 +375,21 @@ button:disabled { opacity: .5; cursor: not-allowed; }
             <label class="toggle"><input type="checkbox" value="2" checked> CAM 3</label>
             <label class="toggle"><input type="checkbox" value="3" checked> CAM 4</label>
           </div>
-          <div class="field-row">
+          <div class="field-row two">
             <label class="field">Frame rate
               <select id="rec-fps"><option value="24">24 fps</option><option value="30" selected>30 fps</option><option value="48">48 fps</option><option value="60">60 fps</option></select>
             </label>
             <label class="field">Bitrate
               <select id="rec-bitrate"><option value="2">2 Mbps</option><option value="4">4 Mbps</option><option value="8" selected>8 Mbps</option><option value="16">16 Mbps</option></select>
             </label>
+            <label class="field">Shutter
+              <select id="rec-shutter"><option value="0">Off (0°)</option><option value="90">90°</option><option value="180" selected>180°</option><option value="270">270°</option><option value="360">360°</option></select>
+            </label>
             <label class="field">Stop after
               <select id="rec-max"><option value="5">5 s</option><option value="10">10 s</option><option value="30" selected>30 s</option><option value="60">60 s</option><option value="120">120 s</option></select>
             </label>
           </div>
+          <p class="note" id="rec-shutter-note"></p>
           <div class="actions">
             <button class="btn primary" type="button" id="rec-btn">Start recording</button>
             <button class="btn" type="button" id="rec-dl" hidden>Download again</button>
@@ -1826,7 +1830,7 @@ function updateOverlay(dt) {
   if (REC.active) {
     $('ov-rec').hidden = false;
     $('ov-rec').textContent = `● REC  ${(REC.frame / REC.fps).toFixed(1)} s · frame ${REC.frame}`;
-    if (frameNo % 6 === 0) $('rec-readout').textContent = `Recording ${REC.tracks.length} camera${REC.tracks.length > 1 ? 's' : ''} at ${REC.fps} fps · frame ${REC.frame} of ${REC.maxFrames} · ${(REC.frame / REC.fps).toFixed(1)} s`;
+    if (frameNo % 6 === 0) $('rec-readout').textContent = `Recording ${REC.tracks.length} camera${REC.tracks.length > 1 ? 's' : ''} at ${REC.fps} fps, ${REC.shutter}° shutter · frame ${REC.frame} of ${REC.maxFrames} · ${(REC.frame / REC.fps).toFixed(1)} s`;
   } else $('ov-rec').hidden = true;
   if (frameNo % 15 === 0) updateMqReadout();
   if (callTimer > 0) { callTimer -= dt; if (callTimer <= 0) $('ov-call').classList.remove('show'); }
@@ -2043,14 +2047,42 @@ function mqttDisconnect() {
 /* =========================================================
    Synchronized recorder: lockstep capture → WebCodecs → MP4, packed with ground truth in a ZIP
    ========================================================= */
+// Shutter: each video frame is the average of K sub-frames (one per physics step) across the exposure.
+// Sub-frames are summed in linear light like a sensor, then encoded back to sRGB for the video.
+const QUAD_VS = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+const accMat = new THREE.ShaderMaterial({
+  uniforms: { tMap: { value: null }, uWeight: { value: 1 } },
+  vertexShader: QUAD_VS,
+  fragmentShader: `uniform sampler2D tMap; uniform float uWeight; varying vec2 vUv;
+    vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+    void main(){ gl_FragColor = vec4(toLinear(texture2D(tMap, vUv).rgb) * uWeight, 1.0); }`,
+  blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation,
+  depthTest: false, depthWrite: false,
+});
+const accScene = new THREE.Scene();
+accScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), accMat));
 const capMat = new THREE.ShaderMaterial({
   uniforms: { tMap: { value: null } },
-  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-  fragmentShader: 'uniform sampler2D tMap; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(tMap, vec2(vUv.x, 1.0 - vUv.y)).rgb, 1.0); }',
+  vertexShader: QUAD_VS,
+  fragmentShader: `uniform sampler2D tMap; varying vec2 vUv;
+    vec3 toSRGB(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+    void main(){ gl_FragColor = vec4(toSRGB(texture2D(tMap, vec2(vUv.x, 1.0 - vUv.y)).rgb), 1.0); }`,   // flip rows for readPixels
   depthTest: false, depthWrite: false,
 });
 const capScene = new THREE.Scene();
 capScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), capMat));
+const STEPS_PER_SEC = 240;                                         // physics rate (STEP = 1/240 s)
+function shutterPlan(fps, deg) {
+  const stepsPerFrame = STEPS_PER_SEC / fps;                       // 240 Hz physics: 8 steps per frame at 30 fps
+  const samples = Math.max(1, Math.round((stepsPerFrame * deg) / 360));
+  return { stepsPerFrame, samples, lead: Math.floor((samples - 1) / 2), exposure: deg > 0 ? deg / 360 / fps : 0 };
+}
+function updateShutterNote() {
+  const fps = +$('rec-fps').value, deg = +$('rec-shutter').value, plan = shutterPlan(fps, deg);
+  $('rec-shutter-note').textContent = deg === 0
+    ? 'Shutter off: every frame is a single instant (no motion blur).'
+    : `${deg}° at ${fps} fps = 1/${Math.round(1 / plan.exposure)} s exposure, ${plan.samples} sub-frames per frame (≈${plan.samples}× render time).`;
+}
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -2067,7 +2099,7 @@ async function chooseCodec(w, h, bitrate, fps) {
   return null;
 }
 function disposeTrack(t) {
-  try { t.pipe && t.pipe.dispose(); t.capRT && t.capRT.dispose(); } catch { /* already gone */ }
+  try { t.pipe && t.pipe.dispose(); t.capRT && t.capRT.dispose(); t.accRT && t.accRT.dispose(); } catch { /* already gone */ }
   try { if (t.enc && t.enc.state !== 'closed') t.enc.close(); } catch { /* already closed */ }
 }
 function recSetStatus(state, text) {
@@ -2078,7 +2110,7 @@ function recSetStatus(state, text) {
   $('rec-btn').disabled = state === 'starting' || state === 'saving';
   if (text !== undefined) $('rec-readout').textContent = text;
   $('rec-dl').hidden = !REC.last || state === 'rec';
-  document.querySelectorAll('#rec-cams input, #rec-fps, #rec-bitrate, #rec-max').forEach((el) => { el.disabled = state === 'rec' || state === 'starting' || state === 'saving'; });
+  document.querySelectorAll('#rec-cams input, #rec-fps, #rec-bitrate, #rec-max, #rec-shutter').forEach((el) => { el.disabled = state === 'rec' || state === 'starting' || state === 'saving'; });
 }
 function setOutputLocked(lock) {
   document.querySelectorAll('#aspect button, #res-preset, #res-w, #res-h').forEach((el) => { el.disabled = lock; });
@@ -2088,7 +2120,9 @@ async function recStart() {
   if (REC.active || REC.stopping) return;
   if (!('VideoEncoder' in window) || !('VideoFrame' in window)) return recSetStatus('error', 'This browser has no WebCodecs video encoder. Use a current Chrome or Edge.');
   if (!window.Mp4Muxer) return recSetStatus('error', 'The MP4 muxer library did not load. This page needs to reach cdn.jsdelivr.net.');
-  const fps = +$('rec-fps').value, bitrate = +$('rec-bitrate').value * 1e6, maxSec = +$('rec-max').value;
+  const fps = +$('rec-fps').value, bitrate = +$('rec-bitrate').value * 1e6, maxSec = +$('rec-max').value, shutter = +$('rec-shutter').value;
+  const plan = shutterPlan(fps, shutter);
+  if (!Number.isInteger(plan.stepsPerFrame)) return recSetStatus('error', `Frame rate must divide ${STEPS_PER_SEC}.`);
   const selected = [...document.querySelectorAll('#rec-cams input:checked')].map((i) => +i.value);
   if (!selected.length) return recSetStatus('error', 'Pick at least one camera to record.');
   recSetStatus('starting', 'Preparing encoders…');
@@ -2102,7 +2136,7 @@ async function recStart() {
       if (!choice) throw new Error(`No supported video codec for ${w}×${h} on CAM ${i + 1}.`);
       const target = new Mp4Muxer.ArrayBufferTarget();
       const muxer = new Mp4Muxer.Muxer({ target, video: { codec: choice.mux, width: w, height: h, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
-      const t = { cam: i, w, h, codec: choice.cfg.codec, muxer, target, pipe: makePipeline(w, h), capRT: new THREE.WebGLRenderTarget(w, h), buf: new Uint8Array(w * h * 4), error: null };
+      const t = { cam: i, w, h, codec: choice.cfg.codec, muxer, target, pipe: makePipeline(w, h), capRT: new THREE.WebGLRenderTarget(w, h), accRT: new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, depthBuffer: false }), buf: new Uint8Array(w * h * 4), error: null };
       t.enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { t.error = e; } });
       t.enc.configure({ ...choice.cfg, latencyMode: 'quality' });
       tracks.push(t);
@@ -2111,33 +2145,64 @@ async function recStart() {
     tracks.forEach(disposeTrack);
     return recSetStatus('error', e.message);
   }
-  Object.assign(REC, { active: true, fps, frame: 0, maxFrames: Math.round(maxSec * fps), acc: 0, tracks, gt: [], events: [], startT: GM.simTime, startWall: new Date().toISOString(), quality });
+  Object.assign(REC, { active: true, fps, frame: 0, maxFrames: Math.round(maxSec * fps), steps: 0, shutter, ...plan, tracks, gt: [], events: [], startT: GM.simTime, startWall: new Date().toISOString(), quality });
   REC.take++;
   setOutputLocked(true);
   syncOutput();
-  emit('recording_start', { take: REC.take, fps, cameras: tracks.map((t) => t.cam + 1) });
-  mqttPub('recorder', { session: SESSION, take: REC.take, state: 'recording', frame: 0, t: r4(GM.simTime), fps, cameras: tracks.map((t) => ({ id: t.cam + 1, width: t.w, height: t.h })) }, 1);
+  emit('recording_start', { take: REC.take, fps, shutter_deg: shutter, samples_per_frame: plan.samples, cameras: tracks.map((t) => t.cam + 1) });
+  mqttPub('recorder', { session: SESSION, take: REC.take, state: 'recording', frame: 0, t: r4(GM.simTime), fps, shutter_deg: shutter, cameras: tracks.map((t) => ({ id: t.cam + 1, width: t.w, height: t.h })) }, 1);
   recSetStatus('rec', 'Recording…');
+}
+// one physics step with everything that moves on screen kept in step (animation, net, camera smoothing)
+function advanceStep() {
+  simStep(STEP);
+  REC.steps++;
+  for (const p of players) animate(p, STEP);
+  ballMesh.position.copy(BALL.pos);
+  animateNet(STEP);
+  updateCameras(STEP);
 }
 async function recTick() {
   if (REC.busy || !REC.active) return;
   REC.busy = true;
   try {
-    const dt = 1 / REC.fps;
-    if (REC.frame > 0) { REC.acc += dt; while (REC.acc >= STEP - 1e-9) { simStep(STEP); REC.acc -= STEP; } }
-    for (const p of players) animate(p, dt);
-    ballMesh.position.copy(BALL.pos);
-    animateNet(dt);
-    updateCameras(dt);
-    const snap = snapshot(REC.frame, true);
+    // Frame k exposes steps [k*M, k*M + K - 1]; its labels describe the centre sample (index `lead`).
+    const K = REC.samples, first = REC.frame * REC.stepsPerFrame;
+    while (REC.steps < first) advanceStep();
+    if (REC.frame === 0) { for (const p of players) animate(p, STEP); ballMesh.position.copy(BALL.pos); updateCameras(STEP); }
+    const cine = REC.quality === 'cinematic', pt = [0, 0, 0];
+    const ballPath = [], ballPath2d = cams.map(() => []), times = [];
+    let snap = null;
+    for (let j = 0; j < K; j++) {
+      if (j > 0) advanceStep();
+      if (j === REC.lead) snap = snapshot(REC.frame, true);
+      times.push(GM.simTime);
+      ballPath.push(v3(BALL.pos));
+      cams.forEach((c, i) => { projectPt(c.cam, c.res[0], c.res[1], BALL.pos, pt); ballPath2d[i].push(pt[2] > c.cam.near ? [r1(pt[0]), r1(pt[1])] : null); });
+      renderer.shadowMap.needsUpdate = true;                       // shadows move with the bodies
+      for (const t of REC.tracks) {
+        if (t.error) throw t.error;
+        runPipeline(t.pipe, cams[t.cam].cam, cine);
+        accMat.uniforms.tMap.value = t.pipe.composer.readBuffer.texture;
+        accMat.uniforms.uWeight.value = 1 / K;
+        renderer.setRenderTarget(t.accRT);
+        if (j === 0) { renderer.setClearColor(0x000000, 0); renderer.clear(); }
+        renderer.autoClear = false;                                  // add this sub-frame on top of the earlier ones
+        renderer.render(accScene, blitCam);
+        renderer.autoClear = true;
+        renderer.setRenderTarget(null);
+      }
+    }
+    snap.exposure = {
+      shutter_deg: REC.shutter, duration_s: r6(REC.exposure), samples: K,
+      start_t: r4(times[0]), end_t: r4(times[K - 1]), mean_t: r4(times.reduce((a, b) => a + b, 0) / K),
+      ball_path: ballPath,
+    };
+    snap.cameras.forEach((c, i) => { if (c.annotations && c.annotations.ball) c.annotations.ball.path_2d = ballPath2d[i]; });
     REC.gt.push(JSON.stringify(snap));
     mqttFrame(snap);
-    renderer.shadowMap.needsUpdate = true;
-    const cine = REC.quality === 'cinematic';
     for (const t of REC.tracks) {
-      if (t.error) throw t.error;
-      runPipeline(t.pipe, cams[t.cam].cam, cine);
-      capMat.uniforms.tMap.value = t.pipe.composer.readBuffer.texture;
+      capMat.uniforms.tMap.value = t.accRT.texture;
       renderer.setRenderTarget(t.capRT);
       renderer.render(capScene, blitCam);
       renderer.readRenderTargetPixels(t.capRT, 0, 0, t.w, t.h, t.buf);
@@ -2159,7 +2224,11 @@ function manifest(frames, videoNames) {
   return {
     format: 'hoopframe/1', session: SESSION, take: REC.take, seed: SEED, created: REC.startWall,
     fps: REC.fps, frames, duration_s: frames / REC.fps, sim_time_start: r4(REC.startT), render_quality: REC.quality,
-    sync: 'Lockstep capture. Video frame k (pts = k / fps) of every camera file and line k of groundtruth.jsonl (field "frame") show the same simulation instant. Field "t" is that instant in simulation seconds.',
+    sync: 'Lockstep capture. Video frame k (pts = k / fps) of every camera file and line k of groundtruth.jsonl (field "frame") come from the same exposure. Labels describe the centre of that exposure; field "t" is that instant in simulation seconds.',
+    shutter: {
+      angle_deg: REC.shutter, exposure_s: r6(REC.exposure), samples_per_frame: REC.samples, sample_spacing_s: r6(STEP),
+      method: 'Each frame averages one rendered sub-frame per 240 Hz physics step across the exposure, in linear light. Camera motion is included. Per frame, groundtruth "exposure" gives the sample times and the 3D ball path, and each camera\'s ball annotation gives "path_2d".',
+    },
     coordinate_system: {
       units: 'metres', origin: 'centre court at floor level', x: `toward the attacked basket (rim centre x = ${r4(RIM.x)})`, y: 'up',
       z: 'right-handed: z = x × y; CAM 1 sits on the -z sideline', yaw: 'radians; facing direction = (sin yaw, 0, cos yaw)',
@@ -2274,6 +2343,8 @@ $('seed-btn').addEventListener('click', () => {
 $('session-id').textContent = `Session ${SESSION} · seed ${SEED}`;
 $('host-note').hidden = window.self === window.top;
 mqttSetState('off', '');
+['rec-fps', 'rec-shutter'].forEach((id) => $(id).addEventListener('change', updateShutterNote));
+updateShutterNote();
 recSetStatus('idle', 'Records every ticked camera at its own output size, frame-locked to the ground truth.');
 
 /* =========================================================

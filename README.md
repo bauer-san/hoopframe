@@ -70,9 +70,10 @@ c.loop_forever()
 
 ## Synchronized recorder
 
-Tick the cameras, then pick the frame rate, bitrate and maximum length, and press **Start recording**.
+Tick the cameras, then pick the frame rate, bitrate, shutter and maximum length, and press **Start recording**.
 Recording is **lockstep**. Each captured frame advances the game by exactly `1/fps` and renders every ticked
-camera at that instant, at that camera's own output size, with the same post-processing as the program view.
+camera over that frame's exposure, at that camera's own output size, with the same post-processing as the
+program view.
 Capture runs as fast as the GPU allows, not in wall-clock time. Each camera's output size is locked while
 recording. Position, aim and FOV can still change, and every change is captured in the per-frame calibration.
 
@@ -87,11 +88,35 @@ The ZIP (`hoopframe_<session>_takeNN.zip`) contains:
 
 Frame rates are divisors of the 240 Hz physics step (24/30/48/60), so `t` advances exactly `1/fps` per frame.
 
+### Shutter and motion blur
+
+The **Shutter** setting gives recordings real motion blur. A frame's exposure lasts `angle / 360 / fps`
+seconds. The recorder renders one sub-frame per 1/240 s physics step across that exposure and averages them
+in linear light, the way a sensor integrates light. Fast movement (the ball in flight, hands, feet) streaks
+along its path, and anything still stays sharp.
+
+| Shutter at 30 fps | Exposure | Sub-frames per frame | Render cost |
+| --- | --- | --- | --- |
+| Off (0°) | instant | 1 | 1× |
+| 90° | 1/120 s | 2 | 2× |
+| 180° (default, the film standard) | 1/60 s | 4 | 4× |
+| 360° | 1/30 s | 8 | 8× |
+
+Labels describe the **centre** of the exposure, and `t` is that instant. With an even sub-frame count, `t` is
+the sample just before the exact centre, which `mean_t` gives (1/480 s later). Each ground-truth line also carries
+an `exposure` block with the sample times and the ball's 3D position at every sub-frame. Each camera's ball
+annotation adds `path_2d`, the ball's pixel position at every sub-frame, so a model can learn the streak's
+extent, not only its centre. The program monitor and the MQTT feed outside recording stay sharp. With
+fixed cameras there is no camera-motion blur. A camera that tracks or follows moves during the exposure,
+and its blur is included.
+
 ### Ground-truth line
 
 ```jsonc
 {
   "session": "20261111T152320-d7da", "seed": 20261111, "frame": 60, "t": 3.9583,
+  "exposure": { "shutter_deg": 180, "duration_s": 0.016667, "samples": 4,
+                "start_t": 3.9542, "end_t": 3.9667, "mean_t": 3.9604, "ball_path": [[x, y, z] /* one per sub-frame */] },
   "possession": "HAR", "phase": "play", "score": { "HAR": 4, "MSA": 2 },
   "ball": { "pos": [x, y, z], "vel": null, "state": "held", "holder": "HAR-23", "pass_to": null, "shot_id": null },
   "players": [{
@@ -108,7 +133,8 @@ Frame rates are divisors of the 240 Hz physics step (24/30/48/60), so `t` advanc
       "players": [{ "id": "HAR-23", "track": 2, "in_frame": true, "truncated": false,
                     "bbox": [x, y, w, h], "bbox_unclipped": [x, y, w, h], "depth_m": 14.2,
                     "occlusion": 0.25, "keypoints_2d": [[u, v, visibility] /* 18, in "keypoints" order */] }],
-      "ball": { "in_frame": true, "center": [u, v], "radius_px": 6.1, "bbox": [x, y, w, h], "depth_m": 15.0, "occluded": false }
+      "ball": { "in_frame": true, "center": [u, v], "radius_px": 6.1, "bbox": [x, y, w, h], "depth_m": 15.0, "occluded": false,
+                "path_2d": [[u, v] /* one per sub-frame, null if behind the camera */] }
     }
   }]
 }
