@@ -25,6 +25,7 @@
   --tally: #e5383b;       /* program tally red: the live camera */
   --home: #d0273f;
   --away: #eef0f3;
+  --ok: #4cc38a;
   --ax-x: #ec6a5e;
   --ax-y: #6cc070;
   --ax-z: #5e9ff0;
@@ -171,6 +172,28 @@ select { background: var(--well); border: 1px solid var(--line); border-radius: 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .hint { font: 400 11px var(--font-mono); color: var(--muted); }
 
+.tabs { display: flex; position: sticky; top: 0; z-index: 3; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 8px 8px; font: 600 15px var(--font-display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.field-row.two { grid-template-columns: 1fr 1fr; }
+input[type=text], input[type=password] {
+  width: 100%; min-width: 0; background: var(--well); border: 1px solid var(--line); border-radius: 3px;
+  padding: 5px 7px; font: 500 12px var(--font-mono);
+}
+.pill { font: 600 11px var(--font-mono); letter-spacing: .02em; text-transform: none; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); }
+.pill[data-state="on"], .pill[data-state="saved"] { color: var(--ok); border-color: var(--ok); }
+.pill[data-state="connecting"], .pill[data-state="starting"], .pill[data-state="saving"] { color: var(--accent); border-color: var(--accent); }
+.pill[data-state="error"], .pill[data-state="rec"] { background: var(--tally); border-color: var(--tally); color: #fff; }
+.readout { overflow-wrap: anywhere; }
+.topics summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.topics dl { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; font-size: 12px; }
+.topics dt { font: 500 11px var(--font-mono); color: var(--fg); }
+.topics dd { margin: 0; color: var(--muted); }
+code { font: 500 12px var(--font-mono); }
+.host-note { margin: 12px 16px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 4px; color: var(--fg); }
+.ov-rec { top: 38px; right: 10px; background: var(--tally); color: #fff; padding: 3px 8px; border-radius: 3px; text-shadow: none; font-variant-numeric: tabular-nums; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
 @media (max-width: 920px) {
   html, body { height: auto; }
   .app { height: auto; }
@@ -219,6 +242,7 @@ select { background: var(--well); border: 1px solid var(--line); border-radius: 
         <div class="ov ov-tl"><span class="tally">PGM</span><span class="camname" id="ov-cam">CAM 1 · Broadcast</span></div>
         <div class="ov ov-bug"><span class="h" id="bug-h"><i class="poss"></i>HAR <b id="bug-hs">0</b></span><span class="a" id="bug-a">MSA <b id="bug-as">0</b><i class="poss"></i></span></div>
         <div class="ov ov-tr" id="ov-tc">00:00:00:00</div>
+        <div class="ov ov-rec" id="ov-rec" hidden>● REC</div>
         <div class="ov ov-bl"><span id="ov-spec">1280 × 720 · 16:9 · FOV 34°</span><span id="ov-disp">Display –</span></div>
         <div class="ov ov-call" id="ov-call"></div>
       </div>
@@ -230,7 +254,12 @@ select { background: var(--well); border: 1px solid var(--line); border-radius: 
       </div>
     </div>
 
-    <aside class="panel" aria-label="Camera control">
+    <aside class="panel" aria-label="Control desk">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="cams" aria-selected="true">Cameras</button>
+        <button type="button" role="tab" data-tab="data" aria-selected="false">Data out</button>
+      </div>
+      <div class="tabpane" id="tab-cams">
       <section>
         <h2>Camera <em>keys 1–4</em></h2>
         <div class="camsel" id="camsel">
@@ -294,6 +323,7 @@ select { background: var(--well); border: 1px solid var(--line); border-radius: 
           <label class="field">Height px<input type="number" id="res-h" min="64" max="3840" step="2"></label>
         </div>
         <div class="readout" id="res-readout">1280 × 720 px · 16:9 · 0.92 MP</div>
+        <p class="note" id="out-lock" hidden>Output size is locked while recording.</p>
       </section>
 
       <section>
@@ -303,10 +333,82 @@ select { background: var(--well); border: 1px solid var(--line); border-radius: 
         </div>
         <span class="hint" id="copy-msg">Space pauses · click a return monitor to take it to program</span>
       </section>
+      </div>
+
+      <div class="tabpane" id="tab-data" hidden>
+        <p class="note host-note" id="host-note" hidden>This embedded preview blocks network connections and downloads. To use MQTT and recording, open <code>basketball-sim/index.html</code> from the repository in Chrome or Edge.</p>
+        <section>
+          <h2>Live feed · MQTT <span class="pill" id="mq-pill" data-state="off">Off</span></h2>
+          <label class="field">Broker WebSocket URL<input type="text" id="mq-url" value="ws://localhost:9001" spellcheck="false" autocomplete="off"></label>
+          <div class="field-row two">
+            <label class="field">Topic prefix<input type="text" id="mq-prefix" value="hoopframe" spellcheck="false" autocomplete="off"></label>
+            <label class="field">Rate
+              <select id="mq-rate"><option value="10">10 Hz</option><option value="15">15 Hz</option><option value="30" selected>30 Hz</option><option value="60">60 Hz</option></select>
+            </label>
+          </div>
+          <div class="field-row two">
+            <label class="field">Username<input type="text" id="mq-user" autocomplete="off" spellcheck="false"></label>
+            <label class="field">Password<input type="password" id="mq-pass" autocomplete="off"></label>
+          </div>
+          <label class="toggle"><input type="checkbox" id="mq-ann" checked> Include per-camera 2D boxes and keypoints</label>
+          <div class="actions"><button class="btn primary" type="button" id="mq-btn">Connect</button></div>
+          <div class="readout" id="mq-readout">Not connected</div>
+          <details class="topics">
+            <summary>Topics</summary>
+            <dl>
+              <dt>&lt;prefix&gt;/frame</dt><dd>Everything for one tick: ball, players, cameras</dd>
+              <dt>&lt;prefix&gt;/ball</dt><dd>Position, velocity, state, holder</dd>
+              <dt>&lt;prefix&gt;/players</dt><dd>All ten players with 3D keypoints</dd>
+              <dt>&lt;prefix&gt;/player/&lt;id&gt;</dt><dd>One player, e.g. player/HAR-23</dd>
+              <dt>&lt;prefix&gt;/camera/&lt;1–4&gt;</dt><dd>K, R, t calibration plus 2D boxes</dd>
+              <dt>&lt;prefix&gt;/events</dt><dd>shot, shot_result, pass, catch, rebound, possession (QoS 1)</dd>
+              <dt>&lt;prefix&gt;/recorder</dt><dd>Recording start and stop markers (QoS 1)</dd>
+              <dt>&lt;prefix&gt;/status</dt><dd>Retained online flag and roster</dd>
+            </dl>
+          </details>
+        </section>
+        <section>
+          <h2>Synchronized recorder <span class="pill" id="rec-pill" data-state="idle">Idle</span></h2>
+          <div class="toggles" id="rec-cams">
+            <label class="toggle"><input type="checkbox" value="0" checked> CAM 1</label>
+            <label class="toggle"><input type="checkbox" value="1" checked> CAM 2</label>
+            <label class="toggle"><input type="checkbox" value="2" checked> CAM 3</label>
+            <label class="toggle"><input type="checkbox" value="3" checked> CAM 4</label>
+          </div>
+          <div class="field-row">
+            <label class="field">Frame rate
+              <select id="rec-fps"><option value="24">24 fps</option><option value="30" selected>30 fps</option><option value="48">48 fps</option><option value="60">60 fps</option></select>
+            </label>
+            <label class="field">Bitrate
+              <select id="rec-bitrate"><option value="2">2 Mbps</option><option value="4">4 Mbps</option><option value="8" selected>8 Mbps</option><option value="16">16 Mbps</option></select>
+            </label>
+            <label class="field">Stop after
+              <select id="rec-max"><option value="5">5 s</option><option value="10">10 s</option><option value="30" selected>30 s</option><option value="60">60 s</option><option value="120">120 s</option></select>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="btn primary" type="button" id="rec-btn">Start recording</button>
+            <button class="btn" type="button" id="rec-dl" hidden>Download again</button>
+          </div>
+          <div class="readout" id="rec-readout">Idle</div>
+          <p class="note">Each captured frame advances the game by exactly 1/fps and renders every ticked camera at that same instant, so video frame <i>k</i> in each file matches line <i>k</i> of the ground truth. Capture runs at whatever speed your GPU allows, not wall-clock time. The ZIP holds one MP4 per camera, <code>groundtruth.jsonl</code>, <code>events.jsonl</code> and <code>manifest.json</code>.</p>
+        </section>
+        <section>
+          <h2>Reproducibility</h2>
+          <div class="field-row two">
+            <label class="field">Seed<input type="number" id="seed" min="0" step="1"></label>
+            <div class="actions" style="align-self:end"><button class="btn" type="button" id="seed-btn">Restart with seed</button></div>
+          </div>
+          <p class="note">The same seed replays the same game. Pressing Shoot now changes the outcome from that point on.</p>
+          <span class="hint" id="session-id"></span>
+        </section>
+      </div>
     </aside>
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -336,9 +438,20 @@ const ARC_R = 7.24, CORNER_Z = 6.71, HOOP_FROM_BASE = HALF_L - RIM.x;
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
-const rand = (a, b) => a + Math.random() * (b - a);
-const pick = (arr) => arr[(Math.random() * arr.length) | 0];
-const gauss = () => { let u = 0, v = 0; while (!u) u = Math.random(); while (!v) v = Math.random(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+// Seeded simulation RNG: the same seed replays the same game step for step (URL #seed-123 sets it).
+const SEED = (() => { const m = /seed-(\d+)/.exec(location.hash); return m ? (+m[1] >>> 0) : 20261111; })();
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const rng = mulberry32(SEED);
+const rand = (a, b) => a + rng() * (b - a);
+const pick = (arr) => arr[(rng() * arr.length) | 0];
+const gauss = () => { let u = 0, v = 0; while (!u) u = rng(); while (!v) v = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+const r4 = (v) => Math.round(v * 1e4) / 1e4, r6 = (v) => Math.round(v * 1e6) / 1e6, r1 = (v) => Math.round(v * 10) / 10;
+const hex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+const SESSION = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + '-' + hex(2);
+// data-out state (declared early: game events fire during setup)
+const MQ = { client: null, state: 'off', sent: 0, rate: 30, prefix: 'hoopframe', tick: -1, ann: true, error: '' };
+const REC = { active: false, busy: false, stopping: false, fps: 30, frame: 0, maxFrames: 900, acc: 0, tracks: [], gt: [], events: [], startT: 0, startWall: '', quality: '', take: 0, last: null };
+let eventSeq = 0, shotSeq = 0;
 const smooth = (u) => u * u * (3 - 2 * u);
 
 /* =========================================================
@@ -574,13 +687,13 @@ function ledTexture(text, bg, fg) {
   const skins = [0x5a3825, 0x7a4e33, 0x8d5a3b, 0xa8754f, 0xc89a72, 0xe0b48f];
   const m4 = new THREE.Matrix4(), col = new THREE.Color();
   fans.forEach((p, i) => {
-    const h = rand(0.92, 1.08);
+    const h = 0.92 + Math.random() * 0.16;
     m4.makeScale(1, h, 1).setPosition(p[0], p[1] + 0.3 * h, p[2]);
     bodies.setMatrixAt(i, m4);
-    bodies.setColorAt(i, col.setHex(pick(shirts)).multiplyScalar(rand(0.55, 1)));
+    bodies.setColorAt(i, col.setHex(shirts[(Math.random() * shirts.length) | 0]).multiplyScalar(0.55 + Math.random() * 0.45));
     m4.makeTranslation(p[0], p[1] + 0.78 * h, p[2]);
     heads.setMatrixAt(i, m4);
-    heads.setColorAt(i, col.setHex(pick(skins)));
+    heads.setColorAt(i, col.setHex(skins[(Math.random() * skins.length) | 0]));   // crowd is cosmetic: kept off the seeded game RNG
   });
   scene.add(bodies, heads);
 
@@ -766,9 +879,10 @@ function makeAthlete(team, num) {
   const shoeMat = new THREE.MeshPhysicalMaterial({ color: t.shoe, roughness: 0.4, clearcoat: 0.5 });
   const soleMat = new THREE.MeshStandardMaterial({ color: t.sole, roughness: 0.6 });
   const hairMat = new THREE.MeshStandardMaterial({ color: pick(HAIR), roughness: 0.95 });
+  const meshes = [];
   const add = (parent, geo, mat, x = 0, y = 0, z = 0, s) => {
     const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); if (s) m.scale.set(...s);
-    m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
+    m.castShadow = true; m.receiveShadow = true; parent.add(m); meshes.push(m); return m;
   };
   const root = new THREE.Group();
   const pelvis = new THREE.Group(); pelvis.position.y = 1.0; root.add(pelvis);
@@ -811,7 +925,16 @@ function makeAthlete(team, num) {
   const blob = new THREE.Mesh(new THREE.CircleGeometry(0.42, 24), contactMat);
   blob.rotation.x = -Math.PI / 2; blob.position.y = 0.004; blob.renderOrder = 2;
   scene.add(root, blob);
-  return { root, pelvis, spine, head, legs, arms, blob };
+  // ground-truth keypoints (s=1 side is the player's left)
+  const mk = (parent, x, y, z) => { const o = new THREE.Object3D(); o.position.set(x, y, z); parent.add(o); return o; };
+  const kp = {
+    head_top: mk(head, 0, 0.185, 0), head: mk(head, 0, 0.06, 0), neck: mk(spine, 0, 0.64, 0),
+    shoulder_l: arms[0].sh, shoulder_r: arms[1].sh, elbow_l: arms[0].el, elbow_r: arms[1].el,
+    wrist_l: mk(arms[0].el, 0, -0.26, 0), wrist_r: mk(arms[1].el, 0, -0.26, 0), pelvis: mk(pelvis, 0, 0, 0),
+    hip_l: legs[0].hip, hip_r: legs[1].hip, knee_l: legs[0].knee, knee_r: legs[1].knee,
+    ankle_l: legs[0].ankle, ankle_r: legs[1].ankle, toe_l: mk(legs[0].ankle, 0, -0.04, 0.17), toe_r: mk(legs[1].ankle, 0, -0.04, 0.17),
+  };
+  return { root, pelvis, spine, head, legs, arms, blob, meshes, kp };
 }
 const contactMat = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -841,10 +964,13 @@ for (let team = 0; team < 2; team++) for (let i = 0; i < 5; i++) {
   const p = {
     team, i, num, label: `${TEAMS[team].short} #${num}`, s: rand(0.95, 1.06),
     pos: new THREE.Vector3(), yaw: 0, speed: 0, move: new THREE.Vector2(0, 1), target: new THREE.Vector3(),
-    stride: Math.random() * 6, jumpY: 0, jumpV: 0, onGround: true,
+    stride: rng() * 6, jumpY: 0, jumpV: 0, onGround: true,
     action: 'none', actT: 0, raise: 0, crouch: 0, spot: 0,
     rig: makeAthlete(team, num),
   };
+  p.idx = players.length;
+  p.id = `${TEAMS[team].short}-${num}`;
+  p.rig.meshes.forEach((m) => { m.userData.pid = p.idx; });
   players.push(p);
 }
 const UP = new THREE.Vector3(0, 1, 0);
@@ -872,8 +998,9 @@ function turnTo(p, dx, dz, dt, rate = 9) {
   p.yaw += clamp(wrapAngle(target - p.yaw), -rate * dt, rate * dt);
   return Math.abs(wrapAngle(target - p.yaw));
 }
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function assignSpots(team) {
-  const order = [0, ...[1, 2, 3, 4, 5, 6, 7, 8].sort(() => Math.random() - 0.5)];
+  const order = [0, ...shuffle([1, 2, 3, 4, 5, 6, 7, 8])];
   const handler = GM.handler && GM.handler.team === team ? GM.handler : null;
   let k = handler ? 1 : 0;
   for (const p of teamOf(team)) {
@@ -890,11 +1017,12 @@ function assignSpots(team) {
     p.yaw = off ? Math.PI / 2 : -Math.PI / 2;
   }
   const h = players.find((p) => p.team === 0 && p.spot === 0);
-  giveBall(h, false);
+  giveBall(h, false, 'tipoff');
   GM.clear = false; GM.decideT = 1.2;
 })();
 
-function giveBall(p, changed) {
+function giveBall(p, changed, how = 'catch') {
+  const prevTeam = GM.off;
   GM.off = p.team; GM.handler = p;
   BALL.mode = 'held'; BALL.holder = p; BALL.pass = null;
   GM.phase = 'play'; GM.driving = false; GM.looseT = 0;
@@ -908,17 +1036,20 @@ function giveBall(p, changed) {
     GM.clear = false;
     GM.decideT = distXZ(p.pos, RIM) < 2.6 ? 0.35 : rand(0.7, 2.0);
   }
+  emit(how, { player: p.id, team: TEAMS[p.team].short, ...(how === 'rebound' ? { offensive: p.team === shot.team, shot_id: shot.id } : {}) });
+  if (changed || p.team !== prevTeam || how === 'tipoff') emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
 }
 
 /* ---------- decisions ---------- */
 function startPass(from, to) {
   const d = distXZ(from.pos, to.pos);
   BALL.mode = 'pass';
-  BALL.pass = { from, to, t: 0, dur: 0.22 + d / 13, p0: BALL.pos.clone(), bounce: d > 3 && d < 7 && Math.random() < 0.25 };
+  BALL.pass = { from, to, t: 0, dur: 0.22 + d / 13, p0: BALL.pos.clone(), bounce: d > 3 && d < 7 && rng() < 0.25 };
   BALL.holder = null;
   from.action = 'pass'; from.actT = 0;
   to.action = 'receive'; to.actT = 0;
   GM.handler = null;
+  emit('pass', { from: from.id, to: to.id, team: TEAMS[from.team].short, kind: BALL.pass.bounce ? 'bounce' : 'chest', distance: r4(d) });
 }
 function startShot(p) {
   p.action = 'gather'; p.actT = 0;
@@ -931,8 +1062,8 @@ function decide(h) {
   const def = matchup(h), space = distXZ(h.pos, def.pos);
   if (dRim < 2.6) return startShot(h);
   const shootP = GM.passes >= 4 ? 0.85 : GM.passes >= 1 ? (space > 1.6 ? 0.5 : 0.22) : 0.08;
-  if (Math.random() < shootP && dRim < 8.6) return startShot(h);
-  if (dRim < 9.5 && Math.random() < 0.2) {
+  if (rng() < shootP && dRim < 8.6) return startShot(h);
+  if (dRim < 9.5 && rng() < 0.2) {
     GM.driving = true; GM.driveT = 0;
     const dir = tA.set(h.pos.x - RIM.x, 0, h.pos.z - RIM.z).normalize();
     GM.driveTarget.set(RIM.x + dir.x * 1.5, 0, RIM.z + dir.z * 1.5);
@@ -941,7 +1072,7 @@ function decide(h) {
   const mates = teamOf(h.team).filter((q) => q !== h && distXZ(q.pos, h.pos) < 11);
   let best = null, bestScore = -1;
   for (const m of mates) {
-    const open = distXZ(m.pos, matchup(m).pos) + Math.random() * 1.2;
+    const open = distXZ(m.pos, matchup(m).pos) + rng() * 1.2;
     if (open > bestScore) { bestScore = open; best = m; }
   }
   if (best) startPass(h, best); else startShot(h);
@@ -958,6 +1089,8 @@ function release(p) {
   BALL.omega.crossVectors(tB.set(BALL.vel.x, 0, BALL.vel.z).normalize(), UP).multiplyScalar(12);
   BALL.mode = 'free'; BALL.holder = null;
   Object.assign(shot, { active: true, done: false, made: false, rim: false, board: false, floor: false, three: isThree(p.pos), team: p.team, shooter: p });
+  shot.id = ++shotSeq;
+  emit('shot', { shot_id: shot.id, shooter: p.id, team: TEAMS[p.team].short, number: p.num, floor_pos: [r4(p.pos.x), r4(p.pos.z)], release: [r4(p0.x), r4(p0.y), r4(p0.z)], distance: r4(Math.hypot(RIM.x - p.pos.x, p.pos.z)), three: shot.three, contested });
   stats.fga++; if (shot.three) stats.tpa++;
   GM.phase = 'shot'; GM.handler = null; GM.looseT = 0;
   p.action = 'follow'; p.actT = 0; p.jumpV = 0; p.onGround = false;
@@ -980,6 +1113,13 @@ function finishShot(made) {
     GM.allow = [0, 1];
   }
   stats.log.push({ made, three: shot.three, team: shot.team });
+  emit('shot_result', {
+    shot_id: shot.id, shooter: shot.shooter ? shot.shooter.id : null, team: TEAMS[shot.team].short, made, three: shot.three,
+    points: made ? (shot.three ? 3 : 2) : 0,
+    kind: made ? (!shot.rim && !shot.board ? 'swish' : shot.board ? 'bank' : 'rim_in') : (!shot.rim && !shot.board ? 'airball' : 'miss'),
+    rim_contact: shot.rim, board_contact: shot.board,
+    score: { [TEAMS[0].short]: stats.pts[0], [TEAMS[1].short]: stats.pts[1] },
+  });
   if (stats.log.length > 16) stats.log.shift();
   renderStats();
 }
@@ -1112,12 +1252,12 @@ function simStep(dt) {
     }
     tB.set(dest.x - ps.p0.x, 0, dest.z - ps.p0.z);
     if (tB.lengthSq() > 1e-6) ballMesh.rotateOnWorldAxis(tB.normalize().cross(UP), -dt * 14);
-    if (u >= 1) { GM.passes++; giveBall(ps.to, false); }
+    if (u >= 1) { GM.passes++; giveBall(ps.to, false, 'catch'); }
   } else {
     stepBall(dt);
     const sp = BALL.vel.length();
     BALL.stillT = sp < 0.05 && BALL.pos.y > 0.4 ? BALL.stillT + dt : 0;
-    if (BALL.stillT > 1.5) { BALL.vel.set(-1.2, 0.8, Math.random() - 0.5); BALL.stillT = 0; }
+    if (BALL.stillT > 1.5) { BALL.vel.set(-1.2, 0.8, rng() - 0.5); BALL.stillT = 0; }
     const w = BALL.omega.length();
     if (w > 1e-4) ballMesh.rotateOnWorldAxis(tB.copy(BALL.omega).multiplyScalar(1 / w), w * dt);
     if (GM.phase === 'shot' && (shot.done || shot.rim || shot.board)) { GM.phase = 'loose'; GM.looseT = 0; if (!shot.done) GM.allow = [0, 1]; }
@@ -1135,7 +1275,7 @@ function simStep(dt) {
     if (GM.looseT > 9) {                               // ball out of reach: hand it to the nearest allowed player
       const p = [...chasers][0];
       local(p, 0, 1.25, 0.38, BALL.pos);
-      giveBall(p, p.team !== shot.team || shot.made);
+      giveBall(p, p.team !== shot.team || shot.made, 'recover');
     }
   }
   // crashers: two offensive players nearest the rim go for the rebound after a shot
@@ -1166,7 +1306,7 @@ function simStep(dt) {
       const reach = 2.25 * p.s + p.jumpY;
       if (d < 0.65 && BALL.pos.y < reach) {
         const wasMade = shot.made;
-        giveBall(p, p.team !== shot.team || wasMade);
+        giveBall(p, p.team !== shot.team || wasMade, wasMade ? 'inbound' : 'rebound');
         if (!wasMade) callout(`${p.label} · ${p.team === shot.team ? 'Off. rebound' : 'Rebound'}`, p.team !== shot.team);
         continue;
       }
@@ -1388,19 +1528,36 @@ function updateCameras(dt) {
    Rendering
    ========================================================= */
 let quality = 'cinematic';
-const mainRT = new THREE.WebGLRenderTarget(1280, 720, { type: THREE.HalfFloatType, samples: 4 });
-const composer = new EffectComposer(renderer, mainRT);
-composer.setPixelRatio(1);
-const renderPass = new RenderPass(scene, cams[0].cam);
-const gtao = new GTAOPass(scene, cams[0].cam, 1280, 720);
-gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.5, thickness: 1.2, scale: 1.1, samples: 16 });
-gtao.blendIntensity = 0.75;
-const bloom = new UnrealBloomPass(new THREE.Vector2(1280, 720), 0.28, 0.55, 0.92);
-composer.addPass(renderPass);
-composer.addPass(gtao);
-composer.addPass(bloom);
-composer.addPass(new OutputPass());
-let composerSize = '';
+// A pipeline renders one camera at its exact output resolution: scene → AO → bloom → tone map / sRGB.
+function makePipeline(w, h) {
+  const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4 });
+  const composer = new EffectComposer(renderer, rt);
+  composer.setPixelRatio(1);
+  composer.setSize(w, h);
+  const renderPass = new RenderPass(scene, cams[0].cam);
+  const gtao = new GTAOPass(scene, cams[0].cam, w, h);
+  gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.5, thickness: 1.2, scale: 1.1, samples: 16 });
+  gtao.blendIntensity = 0.75;
+  const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 0.28, 0.55, 0.92);
+  composer.addPass(renderPass);
+  composer.addPass(gtao);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+  return {
+    composer, renderPass, gtao, bloom,
+    dispose() { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); gtao.dispose(); bloom.dispose(); },
+  };
+}
+function runPipeline(pipe, cam, cine) {
+  pipe.gtao.enabled = cine; pipe.bloom.enabled = cine;
+  pipe.renderPass.camera = cam; pipe.gtao.camera = cam;
+  reflector.visible = cine; reflectArmed = true;
+  pipe.composer.render();
+  reflector.visible = false;
+}
+const mainPipe = makePipeline(1280, 720);
+const composer = mainPipe.composer;
+let composerSize = '1280x720';
 
 const blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const blitMat = new THREE.ShaderMaterial({
@@ -1426,12 +1583,7 @@ function render() {
   if (key !== composerSize) { composer.setSize(c.res[0], c.res[1]); composerSize = key; }
 
   renderer.shadowMap.needsUpdate = true;
-  const cine = quality === 'cinematic';
-  gtao.enabled = cine; bloom.enabled = cine;
-  renderPass.camera = c.cam; gtao.camera = c.cam;
-  reflector.visible = cine; reflectArmed = true;
-  composer.render();
-  reflector.visible = false;
+  runPipeline(mainPipe, c.cam, quality === 'cinematic');
 
   renderer.setRenderTarget(null);
   renderer.setScissorTest(false);
@@ -1602,7 +1754,9 @@ for (const id of ['res-w', 'res-h']) $(id).addEventListener('change', () => {
   syncOutput();
 });
 $('btn-reset').addEventListener('click', () => {
+  const keepRes = cams[sel].res;
   Object.assign(cams[sel], clone(DEFAULTS[sel]));
+  if (REC.active) cams[sel].res = keepRes;      // output size stays locked while recording
   cams[sel].primed = false;
   syncPanel();
 });
@@ -1666,6 +1820,12 @@ function updateOverlay(dt) {
   $('ov-spec').textContent = `${c.res[0]} × ${c.res[1]} · ${aspectLabel(...c.res)} · FOV ${c.fov}° · ${Math.round(mm(c.fov))} mm`;
   $('bug-h').classList.toggle('on', GM.off === 0);
   $('bug-a').classList.toggle('on', GM.off === 1);
+  if (REC.active) {
+    $('ov-rec').hidden = false;
+    $('ov-rec').textContent = `● REC  ${(REC.frame / REC.fps).toFixed(1)} s · frame ${REC.frame}`;
+    if (frameNo % 6 === 0) $('rec-readout').textContent = `Recording ${REC.tracks.length} camera${REC.tracks.length > 1 ? 's' : ''} at ${REC.fps} fps · frame ${REC.frame} of ${REC.maxFrames} · ${(REC.frame / REC.fps).toFixed(1)} s`;
+  } else $('ov-rec').hidden = true;
+  if (frameNo % 15 === 0) updateMqReadout();
   if (callTimer > 0) { callTimer -= dt; if (callTimer <= 0) $('ov-call').classList.remove('show'); }
   if (++frameNo % 6 === 0) {
     tiles.forEach((t, i) => { t.querySelector('.tile-meta span').textContent = `${cams[i].res[0]}×${cams[i].res[1]} · ${cams[i].fov}°`; });
@@ -1682,6 +1842,438 @@ function animateNet(dt) {
 }
 
 /* =========================================================
+   Ground truth: world state, camera calibration, per-camera 2D labels
+   ========================================================= */
+const KP_NAMES = ['head_top', 'head', 'neck', 'shoulder_l', 'shoulder_r', 'elbow_l', 'elbow_r', 'wrist_l', 'wrist_r', 'pelvis', 'hip_l', 'hip_r', 'knee_l', 'knee_r', 'ankle_l', 'ankle_r', 'toe_l', 'toe_r'];
+const OCC_KPS = ['head', 'pelvis', 'knee_l', 'knee_r'];
+const v3 = (v) => [r4(v.x), r4(v.y), r4(v.z)];
+const tW = new THREE.Vector3(), tP = new THREE.Vector3(), tR = new THREE.Vector3(), tC2 = new THREE.Vector3();
+const ray = new THREE.Raycaster();
+
+function emit(type, data) {
+  const e = { type, seq: ++eventSeq, session: SESSION, frame: REC.active ? REC.frame : Math.floor(GM.simTime * MQ.rate), t: r4(GM.simTime), ...data };
+  if (REC.active || REC.stopping) REC.events.push(JSON.stringify(e));
+  mqttPub('events', e, 1);
+}
+function playerState(p) {
+  p.rig.root.updateMatrixWorld(true);
+  const keypoints = {};
+  for (const n of KP_NAMES) keypoints[n] = v3(p.rig.kp[n].getWorldPosition(tW));
+  return {
+    id: p.id, track: p.idx, team: TEAMS[p.team].short, number: p.num, height_m: r4(1.98 * p.s),
+    pos: [r4(p.pos.x), r4(p.jumpY), r4(p.pos.z)],
+    vel: [r4(p.move.x * p.speed), r4(p.onGround ? 0 : p.jumpV), r4(p.move.y * p.speed)],
+    yaw: r4(p.yaw), speed: r4(p.speed), action: p.action, airborne: !p.onGround, has_ball: BALL.holder === p,
+    keypoints,
+  };
+}
+function projectPt(cam, w, h, v, out) {
+  tP.copy(v).applyMatrix4(cam.matrixWorldInverse);
+  out[2] = -tP.z;                                   // depth along the optical axis
+  tP.applyMatrix4(cam.projectionMatrix);
+  out[0] = ((tP.x + 1) / 2) * w;
+  out[1] = ((1 - tP.y) / 2) * h;
+  return out;
+}
+function occluded(cam, point, selfPid) {
+  const dir = tR.subVectors(point, cam.position), dist = dir.length();
+  if (dist < 0.1) return false;
+  dir.multiplyScalar(1 / dist);
+  ray.set(cam.position, dir);
+  ray.near = 0; ray.far = dist - 0.06;
+  for (const q of players) {
+    if (q.idx === selfPid) continue;
+    // cheap reject: closest approach of the ray to this player's body centre
+    const c = tC2.set(q.pos.x, q.jumpY + q.s, q.pos.z).sub(cam.position);
+    const along = c.dot(dir);
+    if (along < -1.2 || along > ray.far + 1.2 || c.lengthSq() - along * along > 1.3 * 1.3) continue;
+    if (ray.intersectObjects(q.rig.meshes, false).length) return true;
+  }
+  return false;
+}
+function annotate(cam, w, h, fy) {
+  const pt = [0, 0, 0], near = cam.near, out = { players: [], ball: null };
+  const clip = (x0, y0, x1, y1) => [clamp(x0, 0, w), clamp(y0, 0, h), clamp(x1, 0, w), clamp(y1, 0, h)];
+  for (const p of players) {
+    p.rig.root.updateMatrixWorld(true);
+    const kp2 = [];
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, dsum = 0, n = 0;
+    for (const name of KP_NAMES) {
+      projectPt(cam, w, h, p.rig.kp[name].getWorldPosition(tW), pt);
+      const front = pt[2] > near;
+      const inImg = front && pt[0] >= 0 && pt[0] < w && pt[1] >= 0 && pt[1] < h;
+      kp2.push(front ? [r1(pt[0]), r1(pt[1]), inImg ? 2 : 1] : [0, 0, 0]);
+      if (front) { x0 = Math.min(x0, pt[0]); y0 = Math.min(y0, pt[1]); x1 = Math.max(x1, pt[0]); y1 = Math.max(y1, pt[1]); dsum += pt[2]; n++; }
+    }
+    if (!n) { out.players.push({ id: p.id, track: p.idx, in_frame: false }); continue; }
+    const depth = dsum / n, pad = (fy * 0.12) / depth;     // ~12 cm of body around the skeleton
+    x0 -= pad; y0 -= pad; x1 += pad; y1 += pad * 0.4;
+    const [cx0, cy0, cx1, cy1] = clip(x0, y0, x1, y1);
+    const inFrame = cx1 - cx0 > 1 && cy1 - cy0 > 1;
+    let occ = 0;
+    if (inFrame) for (const k of OCC_KPS) if (occluded(cam, p.rig.kp[k].getWorldPosition(tW), p.idx)) occ++;
+    out.players.push({
+      id: p.id, track: p.idx, in_frame: inFrame, truncated: inFrame && (cx0 !== x0 || cy0 !== y0 || cx1 !== x1 || cy1 !== y1),
+      bbox: inFrame ? [r1(cx0), r1(cy0), r1(cx1 - cx0), r1(cy1 - cy0)] : null, bbox_unclipped: [r1(x0), r1(y0), r1(x1 - x0), r1(y1 - y0)],
+      depth_m: r4(depth), occlusion: occ / OCC_KPS.length, keypoints_2d: kp2,
+    });
+  }
+  projectPt(cam, w, h, BALL.pos, pt);
+  if (pt[2] > near) {
+    const rp = (fy * BALL_R) / pt[2];
+    const [cx0, cy0, cx1, cy1] = clip(pt[0] - rp, pt[1] - rp, pt[0] + rp, pt[1] + rp);
+    const inFrame = cx1 - cx0 > 0.5 && cy1 - cy0 > 0.5;
+    out.ball = { in_frame: inFrame, center: [r1(pt[0]), r1(pt[1])], radius_px: r1(rp), bbox: [r1(cx0), r1(cy0), r1(cx1 - cx0), r1(cy1 - cy0)], depth_m: r4(pt[2]), occluded: inFrame ? occluded(cam, BALL.pos, -1) : null };
+  } else out.ball = { in_frame: false };
+  return out;
+}
+function cameraState(i, withAnnotations) {
+  const c = cams[i], cam = c.cam, [w, h] = c.res;
+  const fy = h / 2 / Math.tan((cam.fov * Math.PI) / 360);
+  const e = cam.matrixWorldInverse.elements;          // column-major, OpenGL camera (looks down -z, y up)
+  const out = {
+    id: i + 1, name: c.name, width: w, height: h, fov_y: c.fov,
+    K: [[r4(fy), 0, w / 2], [0, r4(fy), h / 2], [0, 0, 1]],
+    R: [[e[0], e[4], e[8]], [-e[1], -e[5], -e[9]], [-e[2], -e[6], -e[10]]].map((row) => row.map(r6)),   // OpenCV: x right, y down, z forward
+    t: [r6(e[12]), r6(-e[13]), r6(-e[14])],
+    position: v3(cam.position), quaternion: [r6(cam.quaternion.x), r6(cam.quaternion.y), r6(cam.quaternion.z), r6(cam.quaternion.w)],
+    follow: c.follow ? (c.subject === 'handler' ? 'ball_handler' : players[c.subject].id) : null, track_ball: c.track,
+  };
+  if (withAnnotations) out.annotations = annotate(cam, w, h, fy);
+  return out;
+}
+function snapshot(frame, withAnnotations) {
+  return {
+    session: SESSION, seed: SEED, frame, t: r4(GM.simTime), wall_ms: Date.now(),
+    possession: TEAMS[GM.off].short, phase: GM.phase,
+    score: { [TEAMS[0].short]: stats.pts[0], [TEAMS[1].short]: stats.pts[1] },
+    ball: {
+      pos: v3(BALL.pos), vel: BALL.mode === 'free' ? v3(BALL.vel) : null, state: BALL.mode,
+      holder: BALL.holder ? BALL.holder.id : null, pass_to: BALL.pass ? BALL.pass.to.id : null,
+      shot_id: shot.active && !shot.done ? shot.id : null,
+    },
+    players: players.map(playerState),
+    cameras: cams.map((_, i) => cameraState(i, withAnnotations)),
+  };
+}
+
+/* =========================================================
+   MQTT publisher (MQTT over WebSockets)
+   ========================================================= */
+const topic = (t) => `${MQ.prefix}/${t}`;
+function statusPayload(online) {
+  return {
+    online, session: SESSION, seed: SEED, rate_hz: MQ.rate, recording: REC.active,
+    teams: TEAMS.map((t, ti) => ({ short: t.short, name: t.name, players: teamOf(ti).map((p) => p.id) })),
+    cameras: cams.map((c, i) => ({ id: i + 1, name: c.name })),
+  };
+}
+function mqttPub(t, obj, qos = 0) {
+  if (!MQ.client || !MQ.client.connected) return;
+  MQ.client.publish(topic(t), JSON.stringify(obj), { qos });
+  MQ.sent++;
+}
+function mqttFrame(snap) {
+  if (!MQ.client || !MQ.client.connected) return;
+  const head = { session: snap.session, frame: snap.frame, t: snap.t, wall_ms: snap.wall_ms };
+  mqttPub('frame', snap);
+  mqttPub('ball', { ...head, ...snap.ball });
+  mqttPub('players', { ...head, players: snap.players });
+  for (const pl of snap.players) mqttPub(`player/${pl.id}`, { ...head, ...pl });
+  for (const c of snap.cameras) mqttPub(`camera/${c.id}`, { ...head, ...c });
+}
+function mqttTick() {
+  if (!MQ.client || !MQ.client.connected) return;
+  const tick = Math.floor(GM.simTime * MQ.rate);
+  if (tick === MQ.tick) return;
+  MQ.tick = tick;
+  mqttFrame(snapshot(tick, MQ.ann));
+}
+function mqttSetState(state, detail) {
+  MQ.state = state;
+  if (detail !== undefined) MQ.error = detail;
+  const pill = $('mq-pill');
+  pill.dataset.state = state;
+  pill.textContent = { off: 'Off', connecting: 'Connecting', on: 'Live', error: 'Error' }[state];
+  $('mq-btn').textContent = MQ.client ? 'Disconnect' : 'Connect';
+  ['mq-url', 'mq-prefix', 'mq-user', 'mq-pass', 'mq-rate', 'mq-ann'].forEach((id) => { $(id).disabled = !!MQ.client; });
+  updateMqReadout();
+}
+function updateMqReadout() {
+  const el = $('mq-readout');
+  if (MQ.state === 'on') el.textContent = `Publishing to ${MQ.prefix}/… at ${REC.active ? REC.fps + ' fps (recorder clock)' : MQ.rate + ' Hz'} · ${MQ.sent.toLocaleString()} messages sent`;
+  else if (MQ.state === 'connecting') el.textContent = MQ.error || 'Connecting…';
+  else if (MQ.state === 'error') el.textContent = MQ.error;
+  else el.textContent = 'Not connected';
+}
+function mqttConnect() {
+  if (!window.mqtt) return mqttSetState('error', 'The MQTT library did not load. This page needs to reach cdn.jsdelivr.net.');
+  saveSettings();
+  MQ.prefix = $('mq-prefix').value.trim().replace(/\/+$/, '') || 'hoopframe';
+  MQ.rate = +$('mq-rate').value;
+  MQ.ann = $('mq-ann').checked;
+  MQ.tick = -1;
+  let client;
+  try {
+    client = window.mqtt.connect($('mq-url').value.trim(), {
+      clientId: `hoopframe-${hex(4)}`, username: $('mq-user').value || undefined, password: $('mq-pass').value || undefined,
+      reconnectPeriod: 3000, connectTimeout: 8000, clean: true,
+      will: { topic: topic('status'), payload: JSON.stringify({ online: false, session: SESSION }), qos: 1, retain: true },
+    });
+  } catch (e) { return mqttSetState('error', `Could not connect: ${e.message}`); }
+  MQ.client = client;
+  mqttSetState('connecting', 'Connecting…');
+  client.on('connect', () => { mqttSetState('on', ''); client.publish(topic('status'), JSON.stringify(statusPayload(true)), { qos: 1, retain: true }); });
+  client.on('reconnect', () => { if (MQ.client === client) mqttSetState('connecting', 'Broker unreachable. Retrying every 3 s…'); });
+  client.on('error', (e) => { if (MQ.client === client) mqttSetState('error', `Broker error: ${e.message || e}. Retrying…`); });
+}
+function mqttDisconnect() {
+  const c = MQ.client;
+  MQ.client = null;
+  if (c) {
+    if (c.connected) c.publish(topic('status'), JSON.stringify(statusPayload(false)), { qos: 1, retain: true });
+    c.end(false);
+  }
+  mqttSetState('off', '');
+}
+
+/* =========================================================
+   Synchronized recorder: lockstep capture → WebCodecs → MP4, packed with ground truth in a ZIP
+   ========================================================= */
+const capMat = new THREE.ShaderMaterial({
+  uniforms: { tMap: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: 'uniform sampler2D tMap; varying vec2 vUv; void main(){ gl_FragColor = vec4(texture2D(tMap, vec2(vUv.x, 1.0 - vUv.y)).rgb, 1.0); }',
+  depthTest: false, depthWrite: false,
+});
+const capScene = new THREE.Scene();
+capScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), capMat));
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function chooseCodec(w, h, bitrate, fps) {
+  const options = [
+    { codec: 'avc1.640033', mux: 'avc', extra: { avc: { format: 'avc' } } },   // H.264 High 5.1
+    { codec: 'vp09.00.51.08', mux: 'vp9', extra: {} },
+    { codec: 'av01.0.12M.08', mux: 'av1', extra: {} },
+  ];
+  for (const o of options) {
+    const cfg = { codec: o.codec, width: w, height: h, bitrate, framerate: fps, ...o.extra };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, mux: o.mux }; } catch { /* try the next codec */ }
+  }
+  return null;
+}
+function disposeTrack(t) {
+  try { t.pipe && t.pipe.dispose(); t.capRT && t.capRT.dispose(); } catch { /* already gone */ }
+  try { if (t.enc && t.enc.state !== 'closed') t.enc.close(); } catch { /* already closed */ }
+}
+function recSetStatus(state, text) {
+  const pill = $('rec-pill');
+  pill.dataset.state = state;
+  pill.textContent = { idle: 'Idle', starting: 'Starting', rec: 'Recording', saving: 'Saving', saved: 'Saved', error: 'Error' }[state];
+  $('rec-btn').textContent = state === 'rec' ? 'Stop and save' : 'Start recording';
+  $('rec-btn').disabled = state === 'starting' || state === 'saving';
+  if (text !== undefined) $('rec-readout').textContent = text;
+  $('rec-dl').hidden = !REC.last || state === 'rec';
+  document.querySelectorAll('#rec-cams input, #rec-fps, #rec-bitrate, #rec-max').forEach((el) => { el.disabled = state === 'rec' || state === 'starting' || state === 'saving'; });
+}
+function setOutputLocked(lock) {
+  document.querySelectorAll('#aspect button, #res-preset, #res-w, #res-h').forEach((el) => { el.disabled = lock; });
+  $('out-lock').hidden = !lock;
+}
+async function recStart() {
+  if (REC.active || REC.stopping) return;
+  if (!('VideoEncoder' in window) || !('VideoFrame' in window)) return recSetStatus('error', 'This browser has no WebCodecs video encoder. Use a current Chrome or Edge.');
+  if (!window.Mp4Muxer) return recSetStatus('error', 'The MP4 muxer library did not load. This page needs to reach cdn.jsdelivr.net.');
+  const fps = +$('rec-fps').value, bitrate = +$('rec-bitrate').value * 1e6, maxSec = +$('rec-max').value;
+  const selected = [...document.querySelectorAll('#rec-cams input:checked')].map((i) => +i.value);
+  if (!selected.length) return recSetStatus('error', 'Pick at least one camera to record.');
+  recSetStatus('starting', 'Preparing encoders…');
+  const tracks = [];
+  try {
+    for (const i of selected) {
+      const c = cams[i];
+      c.res = [c.res[0] & ~1, c.res[1] & ~1];          // encoders need even dimensions
+      const [w, h] = c.res;
+      const choice = await chooseCodec(w, h, bitrate, fps);
+      if (!choice) throw new Error(`No supported video codec for ${w}×${h} on CAM ${i + 1}.`);
+      const target = new Mp4Muxer.ArrayBufferTarget();
+      const muxer = new Mp4Muxer.Muxer({ target, video: { codec: choice.mux, width: w, height: h, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
+      const t = { cam: i, w, h, codec: choice.cfg.codec, muxer, target, pipe: makePipeline(w, h), capRT: new THREE.WebGLRenderTarget(w, h), buf: new Uint8Array(w * h * 4), error: null };
+      t.enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => { t.error = e; } });
+      t.enc.configure({ ...choice.cfg, latencyMode: 'quality' });
+      tracks.push(t);
+    }
+  } catch (e) {
+    tracks.forEach(disposeTrack);
+    return recSetStatus('error', e.message);
+  }
+  Object.assign(REC, { active: true, fps, frame: 0, maxFrames: Math.round(maxSec * fps), acc: 0, tracks, gt: [], events: [], startT: GM.simTime, startWall: new Date().toISOString(), quality });
+  REC.take++;
+  setOutputLocked(true);
+  syncOutput();
+  emit('recording_start', { take: REC.take, fps, cameras: tracks.map((t) => t.cam + 1) });
+  mqttPub('recorder', { session: SESSION, take: REC.take, state: 'recording', frame: 0, t: r4(GM.simTime), fps, cameras: tracks.map((t) => ({ id: t.cam + 1, width: t.w, height: t.h })) }, 1);
+  recSetStatus('rec', 'Recording…');
+}
+async function recTick() {
+  if (REC.busy || !REC.active) return;
+  REC.busy = true;
+  try {
+    const dt = 1 / REC.fps;
+    if (REC.frame > 0) { REC.acc += dt; while (REC.acc >= STEP - 1e-9) { simStep(STEP); REC.acc -= STEP; } }
+    for (const p of players) animate(p, dt);
+    ballMesh.position.copy(BALL.pos);
+    animateNet(dt);
+    updateCameras(dt);
+    const snap = snapshot(REC.frame, true);
+    REC.gt.push(JSON.stringify(snap));
+    mqttFrame(snap);
+    renderer.shadowMap.needsUpdate = true;
+    const cine = REC.quality === 'cinematic';
+    for (const t of REC.tracks) {
+      if (t.error) throw t.error;
+      runPipeline(t.pipe, cams[t.cam].cam, cine);
+      capMat.uniforms.tMap.value = t.pipe.composer.readBuffer.texture;
+      renderer.setRenderTarget(t.capRT);
+      renderer.render(capScene, blitCam);
+      renderer.readRenderTargetPixels(t.capRT, 0, 0, t.w, t.h, t.buf);
+      renderer.setRenderTarget(null);
+      const vf = new VideoFrame(t.buf, { format: 'RGBA', codedWidth: t.w, codedHeight: t.h, timestamp: Math.round((REC.frame * 1e6) / REC.fps), duration: Math.round(1e6 / REC.fps) });
+      t.enc.encode(vf, { keyFrame: REC.frame % (REC.fps * 2) === 0 });
+      vf.close();
+    }
+    REC.frame++;
+    while (REC.tracks.some((t) => t.enc.encodeQueueSize > 3)) await sleep(2);
+    if (REC.frame >= REC.maxFrames) await recStop(null, true);
+  } catch (e) {
+    await recStop(e, true);
+  } finally {
+    REC.busy = false;
+  }
+}
+function manifest(frames, videoNames) {
+  return {
+    format: 'hoopframe/1', session: SESSION, take: REC.take, seed: SEED, created: REC.startWall,
+    fps: REC.fps, frames, duration_s: frames / REC.fps, sim_time_start: r4(REC.startT), render_quality: REC.quality,
+    sync: 'Lockstep capture. Video frame k (pts = k / fps) of every camera file and line k of groundtruth.jsonl (field "frame") show the same simulation instant. Field "t" is that instant in simulation seconds.',
+    coordinate_system: {
+      units: 'metres', origin: 'centre court at floor level', x: `toward the attacked basket (rim centre x = ${r4(RIM.x)})`, y: 'up',
+      z: 'right-handed: z = x × y; CAM 1 sits on the -z sideline', yaw: 'radians; facing direction = (sin yaw, 0, cos yaw)',
+    },
+    camera_model: 'Pinhole, no lens distortion. OpenCV convention: [u v 1]^T ~ K (R X + t), origin at the top-left pixel corner, +u right, +v down; R, t map world to camera; camera looks along +z.',
+    court: { length: 28.65, width: 15.24, rim: v3(RIM), rim_height: RIM_H, rim_radius: RIM_R, ball_radius: BALL_R, three_point_radius: ARC_R, corner_three_z: CORNER_Z },
+    keypoints: KP_NAMES,
+    keypoint_visibility: { 0: 'behind the camera', 1: 'in front of the camera but outside the image', 2: 'inside the image (self-occlusion not tested)' },
+    occlusion: 'Fraction of head, pelvis and both knees hidden from the camera by other players\' bodies. Hoop, stanchion and crowd are not tested.',
+    teams: TEAMS.map((t, ti) => ({ name: t.name, short: t.short, players: teamOf(ti).map((p) => ({ id: p.id, track: p.idx, number: p.num, height_m: r4(1.98 * p.s) })) })),
+    cameras: REC.tracks.map((t, k) => ({ id: t.cam + 1, name: cams[t.cam].name, file: videoNames[k], width: t.w, height: t.h, codec: t.codec })),
+    files: { groundtruth: 'groundtruth.jsonl', events: 'events.jsonl' },
+  };
+}
+async function recStop(err, internal) {
+  if (!REC.active) return;
+  REC.active = false;
+  REC.stopping = true;
+  if (!internal) while (REC.busy) await sleep(5);
+  const frames = REC.frame;
+  emit('recording_stop', { take: REC.take, frame: Math.max(0, frames - 1), frames, reason: err ? 'error' : 'stopped' });
+  mqttPub('recorder', { session: SESSION, take: REC.take, state: 'stopped', frames, t: r4(GM.simTime) }, 1);
+  recSetStatus('saving', 'Finalising video files…');
+  try {
+    if (err) throw err;
+    if (!frames) throw new Error('No frames were captured.');
+    const files = [];
+    for (const t of REC.tracks) {
+      await t.enc.flush();
+      if (t.error) throw t.error;
+      t.muxer.finalize();
+      files.push({ name: `cam${t.cam + 1}_${slug(cams[t.cam].name)}.mp4`, data: new Uint8Array(t.target.buffer) });
+    }
+    const te = new TextEncoder();
+    const videoNames = files.map((f) => f.name);
+    files.push({ name: 'groundtruth.jsonl', data: te.encode(REC.gt.join('\n') + '\n') });
+    files.push({ name: 'events.jsonl', data: te.encode(REC.events.join('\n') + (REC.events.length ? '\n' : '')) });
+    files.push({ name: 'manifest.json', data: te.encode(JSON.stringify(manifest(frames, videoNames), null, 2)) });
+    const blob = makeZip(files);
+    const name = `hoopframe_${SESSION}_take${String(REC.take).padStart(2, '0')}.zip`;
+    REC.last = { blob, name };
+    downloadBlob(blob, name);
+    recSetStatus('saved', `Saved ${name} · ${frames} frames × ${REC.tracks.length} camera${REC.tracks.length > 1 ? 's' : ''} · ${(blob.size / 1e6).toFixed(1)} MB`);
+  } catch (e) {
+    recSetStatus('error', `Recording failed: ${e.message || e}`);
+  } finally {
+    REC.tracks.forEach(disposeTrack);
+    REC.tracks = []; REC.gt = []; REC.events = [];
+    REC.stopping = false;
+    setOutputLocked(false);
+  }
+}
+// minimal ZIP writer (stored, no compression: the videos are already compressed)
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function makeZip(files) {
+  const te = new TextEncoder(), parts = [], central = [];
+  const d = new Date();
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  let offset = 0, cdSize = 0;
+  for (const f of files) {
+    const name = te.encode(f.name), crc = crc32(f.data), size = f.data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(10, time, true); lh.setUint16(12, date, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, size, true); lh.setUint32(22, size, true); lh.setUint16(26, name.length, true);
+    parts.push(lh.buffer, name, f.data);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(12, time, true); ch.setUint16(14, date, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, size, true); ch.setUint32(24, size, true); ch.setUint16(28, name.length, true); ch.setUint32(42, offset, true);
+    central.push(ch.buffer, name);
+    offset += 30 + name.length + size;
+    cdSize += 46 + name.length;
+  }
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end.buffer], { type: 'application/zip' });
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+/* ---------- Data out tab ---------- */
+document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
+  document.querySelectorAll('.tabs button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+  document.querySelectorAll('.tabpane').forEach((pane) => { pane.hidden = pane.id !== `tab-${b.dataset.tab}`; });
+}));
+const SETTINGS_KEY = 'hoopframe-dataout';
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ url: $('mq-url').value, prefix: $('mq-prefix').value, user: $('mq-user').value, rate: $('mq-rate').value, ann: $('mq-ann').checked })); } catch { /* storage unavailable */ }
+}
+try {
+  const st = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+  if (st) { $('mq-url').value = st.url; $('mq-prefix').value = st.prefix; $('mq-user').value = st.user || ''; $('mq-rate').value = st.rate; $('mq-ann').checked = st.ann; }
+} catch { /* storage unavailable */ }
+$('mq-btn').addEventListener('click', () => (MQ.client ? mqttDisconnect() : mqttConnect()));
+$('rec-btn').addEventListener('click', () => (REC.active ? recStop(null, false) : recStart()));
+$('rec-dl').addEventListener('click', () => { if (REC.last) downloadBlob(REC.last.blob, REC.last.name); });
+$('seed').value = SEED;
+$('seed-btn').addEventListener('click', () => {
+  const v = Math.max(0, Math.floor(+$('seed').value || 0)) >>> 0;
+  location.hash = `seed-${v}`;
+  location.reload();
+});
+$('session-id').textContent = `Session ${SESSION} · seed ${SEED}`;
+$('host-note').hidden = window.self === window.top;
+mqttSetState('off', '');
+recSetStatus('idle', 'Records every ticked camera at its own output size, frame-locked to the ground truth.');
+
+/* =========================================================
    Loop
    ========================================================= */
 const STEP = 1 / 240;
@@ -1689,16 +2281,22 @@ let acc = 0, last = performance.now();
 function frame(now) {
   const rdt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  const sdt = paused ? 0 : rdt * speed;
-  if (!paused) {
-    acc += sdt;
-    let n = 0;
-    while (acc >= STEP && n++ < 60) { simStep(STEP); acc -= STEP; }
+  if (REC.active) {
+    // lockstep: the recorder advances the simulation exactly 1/fps per captured frame
+    if (!paused) recTick();
+  } else {
+    const sdt = paused ? 0 : rdt * speed;
+    if (!paused) {
+      acc += sdt;
+      let n = 0;
+      while (acc >= STEP && n++ < 60) { simStep(STEP); acc -= STEP; }
+    }
+    for (const p of players) animate(p, sdt);
+    ballMesh.position.copy(BALL.pos);
+    animateNet(sdt);
+    updateCameras(paused ? 1 : rdt);
+    mqttTick();
   }
-  for (const p of players) animate(p, sdt);
-  ballMesh.position.copy(BALL.pos);
-  animateNet(sdt);
-  updateCameras(paused ? 1 : rdt);
   render();
   updateOverlay(rdt);
   requestAnimationFrame(frame);
@@ -1707,7 +2305,15 @@ syncPanel();
 renderStats();
 for (const p of players) animate(p, 1);
 // test hook: fast-forward the game logic without rendering
-window.hoopframe = { advance(seconds) { for (let i = 0; i < seconds / STEP; i++) simStep(STEP); return { score: stats.pts.slice(), fga: stats.fga, fgm: stats.fgm, phase: GM.phase, off: GM.off }; } };
+const testState = () => ({ t: r4(GM.simTime), score: stats.pts.slice(), fga: stats.fga, fgm: stats.fgm, phase: GM.phase, off: GM.off, events: eventSeq, ball: v3(BALL.pos) });
+window.hoopframe = {
+  advance(seconds) { for (let i = 0; i < seconds / STEP; i++) simStep(STEP); return testState(); },
+  advanceTo(t) { while (GM.simTime < t - 1e-9) simStep(STEP); return testState(); },
+  profile() {
+    const time = (fn) => { const t0 = performance.now(); fn(); return +(performance.now() - t0).toFixed(1); };
+    return { snapshot_ms: time(() => snapshot(0, false)), snapshot_with_2d_ms: time(() => snapshot(0, true)), render_ms: time(render), json_kb: +(JSON.stringify(snapshot(0, true)).length / 1024).toFixed(1) };
+  },
+};
 requestAnimationFrame(frame);
 </script>
 <!--ARTIFACT-END-->
