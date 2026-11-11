@@ -1481,7 +1481,23 @@ function animate(p, dt) {
 /* =========================================================
    Cameras
    ========================================================= */
-const DEFAULTS = [
+// Camera layouts, picked with #cams-<name> in the URL (combine with a seed: #seed-123&cams-gym).
+// gym: the four fixed cameras of a real gym, two per end on the backboard supports: a wide one viewing
+// its own half and a narrow one viewing the far end. Its court is shorter (21.4 m), so each camera keeps its
+// distance and angle to the baseline it views, moved to the attacked end here; players then appear at the size and
+// angle they have in the real footage. The wide cameras sit 8.5 cm in front of the backboard (the real ones look over
+// its top edge; NR's calibrated 3.5 cm behind it put the board across the image). Pinhole at 1920 × 1080, the
+// undistorted frames a detector gets.
+const LAYOUTS = {
+  gym: [
+    { name: 'NL Wide', pos: [13.02, 3.81, 0.05], target: [10.8, 0, 0.03], fov: 76.9, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'FL Narrow', pos: [-6.21, 4.16, 0.19], target: [14, 0.735, -1.185], fov: 29.6, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'NR Wide', pos: [13.02, 4.05, -0.02], target: [10.36, 0, 0.35], fov: 73.5, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+    { name: 'FR Narrow', pos: [-6.04, 4.06, -0.02], target: [14, 0.884, 0.332], fov: 30.2, track: false, follow: false, subject: 'handler', res: [1920, 1080] },
+  ],
+};
+const LAYOUT = (() => { const m = /cams-(\w+)/.exec(location.hash); return m && LAYOUTS[m[1]] ? m[1] : null; })();
+const DEFAULTS = LAYOUT ? LAYOUTS[LAYOUT] : [
   { name: 'Broadcast', pos: [3, 7.2, -18.5], target: [7, 1.2, 0], fov: 32, track: true, follow: false, subject: 'handler', res: [1280, 720] },
   { name: 'Behind Basket', pos: [16.2, 5.0, 0.6], target: [8, 1.6, 0], fov: 48, track: false, follow: false, subject: 'handler', res: [1280, 720] },
   { name: 'Player Follow', pos: [-3.8, 2.4, 2.2], target: [0, 1.4, 0], fov: 55, track: false, follow: true, subject: 'handler', res: [1280, 720] },
@@ -1493,6 +1509,7 @@ const cams = DEFAULTS.map((d) => ({
   cam: new THREE.PerspectiveCamera(d.fov, d.res[0] / d.res[1], 0.05, 220),
   sPos: new THREE.Vector3(), sTgt: new THREE.Vector3(), primed: false,
 }));
+document.querySelectorAll('#camsel button span, .tile .tile-meta b').forEach((el) => { el.textContent = cams[+el.closest('[data-cam]').dataset.cam].name; });
 let sel = 0;
 let lastHandler = players[0];
 function subjectOf(c) {
@@ -2341,7 +2358,7 @@ $('rec-dl').addEventListener('click', () => { if (REC.last) downloadBlob(REC.las
 $('seed').value = SEED;
 $('seed-btn').addEventListener('click', () => {
   const v = Math.max(0, Math.floor(+$('seed').value || 0)) >>> 0;
-  location.hash = `seed-${v}`;
+  location.hash = [`seed-${v}`, ...location.hash.slice(1).split('&').filter((s) => s && !s.startsWith('seed-'))].join('&');
   location.reload();
 });
 $('session-id').textContent = `Session ${SESSION} · seed ${SEED}`;

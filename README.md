@@ -179,6 +179,14 @@ for k, g in enumerate(gt):
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 ```
 
+## Camera layouts
+
+Open the page with `#cams-gym` in the URL (with a seed: `#seed-123&cams-gym`) to replace the four default cameras
+with the fixed cameras of a real gym: two per end on the backboard supports, a wide one (NL, NR) viewing its own
+half and a narrow one (FL, FR) viewing the far end, all at 1920 × 1080. That gym's court is shorter (21.4 m), so each
+camera keeps its distance and angle to the baseline it views and is moved to the attacked end; players appear at the
+size and angle they have in the real footage. **Reset this camera** returns to the layout's position.
+
 ## Reproducibility
 
 The game logic runs on a seeded generator. The same seed gives the same game, event for event, at any
