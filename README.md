@@ -179,15 +179,22 @@ for k, g in enumerate(gt):
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 ```
 
-## Camera layouts
+## Gym court and camera layout
 
-Open the page with `#cams-gym` in the URL (with a seed: `#seed-123&cams-gym`) to replace the four default cameras
-with the fixed cameras of a real gym at their true places, all at 1920 × 1080: two on each backboard support, a wide
-one viewing its own half (NL, NR) and a narrow one viewing the far half (FL on the right support, FR on the left).
-Play is on the +x half only, so NL and FL view an empty half. Positions are relative to each camera's backboard.
-That gym's court is shorter (21.4 m), so the narrow cameras stand 26.4 m instead of 20.4 m from the far baseline,
-framing it as in the gym; players there look about 23 % smaller than in its footage. **Reset this camera** returns
-to the layout's position.
+Two URL options, combined with `&` (and a seed: `#seed-123&court-gym&cams-gym`):
+
+- `#court-gym` replaces the NBA arena with a real gym: a 70.3 × 45.05 ft (21.4 × 13.7 m) court with a 12 ft lane and
+  a 19.75 ft three-point arc that runs straight to the baseline, pale maple to the walls, a red lane, white walls over
+  a dark padded band 2.5 m beyond the baselines and 2 m beyond the sidelines, a dark 7 m ceiling with LED panels, and
+  benches with a few spectators along the end walls instead of stands. Play stays half court toward +x.
+- `#cams-gym` replaces the four default cameras with that gym's fixed cameras at their true places, all at
+  1920 × 1080: two on each backboard support, a wide one viewing its own half (NL, NR) and a narrow one viewing the
+  far half (FL on the right support, FR on the left). NL and FL view the empty half. Each camera is placed relative
+  to its backboard, so the layout is exact on the gym court. On the arena court the narrow cameras stand 26.4 m
+  instead of 20.4 m from the far baseline, framing it as in the gym, and players there look about 23 % smaller.
+
+The manifest's `court` block gives the court used (`name`, `length`, `width`, `lane_width`). **Reset this camera**
+returns to the layout's position.
 
 ## Reproducibility
 
