@@ -211,7 +211,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 
 <div class="app">
   <header class="topbar">
-    <div class="brand"><h1>Hoopframe</h1><span>5-ON-5 HALF COURT · 4-CAM</span></div>
+    <div class="brand"><h1>Hoopframe</h1><span>5-ON-5 FULL COURT · 4-CAM</span></div>
     <div class="stats" aria-live="polite">
       <div class="stat team home"><b id="st-h">0</b><small>Harbor</small></div>
       <div class="stat team away"><b id="st-a">0</b><small>Mesa</small></div>
@@ -430,7 +430,7 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
 
 /* =========================================================
    Court geometry (metres). x = court length, z = width, y = up.
-   Play runs half court toward the +x basket.
+   Full court: HAR attacks the +x basket and MSA the -x basket, and play changes ends with possession.
    NBA arena by default; #court-gym in the URL: a real gym (70.3 × 45.05 ft court, 12 ft lane, 19.75 ft
    three-point arc running straight to the baseline), white walls, benches instead of stands.
    ========================================================= */
@@ -440,6 +440,11 @@ const RIM_H = 3.05, RIM_R = 0.2286, BALL_R = 0.12, G = 9.81;
 const BB_X = HALF_L - 1.22;
 const RIM = new THREE.Vector3(BB_X - 0.15 - RIM_R, RIM_H, 0);
 const BB = { x0: BB_X, x1: BB_X + 0.05, y0: 2.90, y1: 3.97, z0: -0.915, z1: 0.915 };
+// Both baskets. Team t attacks the basket at x = ATTACK[t] * |rim x|. RIM (and SPOTS below) always describe the
+// basket of the team in possession and are moved by setAttack(); RIMS and BBS are fixed, for ball physics.
+const RIMS = [RIM.clone(), new THREE.Vector3(-RIM.x, RIM_H, 0)];
+const BBS = [BB, { x0: -BB.x1, x1: -BB.x0, y0: BB.y0, y1: BB.y1, z0: BB.z0, z1: BB.z1 }];
+const ATTACK = [1, -1];
 const ARC_R = GYM ? 6.02 : 7.24, CORNER_Z = GYM ? 6.02 : 6.71, HOOP_FROM_BASE = HALF_L - RIM.x;
 const LANE_HW = GYM ? 1.83 : 2.44;
 // gym room: walls this far beyond the baselines and sidelines, ceiling height
@@ -464,6 +469,7 @@ const SESSION = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + '-'
 const MQ = { client: null, state: 'off', sent: 0, rate: 30, prefix: 'hoopframe', tick: -1, ann: true, error: '' };
 const REC = { active: false, busy: false, stopping: false, fps: 30, frame: 0, maxFrames: 900, acc: 0, tracks: [], gt: [], events: [], startT: 0, startWall: '', quality: '', take: 0, last: null };
 let eventSeq = 0, shotSeq = 0;
+let eventLog = null;                                 // test hook: hoopframe.events() collects events here
 const smooth = (u) => u * u * (3 - 2 * u);
 
 /* =========================================================
@@ -781,7 +787,7 @@ function ledTexture(text, bg, fg) {
     b.position.set(x, 0.425, z); b.rotation.y = rotY; b.castShadow = true; scene.add(b);
   };
   addBoard(9.5, -8.6, -HALF_W - 1.6, 0, 'HOOPFRAME ARENA  •  4-CAM LIVE  •  ');
-  addBoard(9.5, 8.6, -HALF_W - 1.6, 0, 'HARBOR vs MESA  •  HALF COURT  •  ');
+  addBoard(9.5, 8.6, -HALF_W - 1.6, 0, 'HARBOR vs MESA  •  FULL COURT  •  ');
   addBoard(28, 0, HALF_W + 1.9, Math.PI, 'HOOPFRAME ARENA  •  HARBOR vs MESA  •  ');
   addBoard(12, HALF_L + 3.0, 0, -Math.PI / 2, 'HOOPFRAME ARENA  •  ');
   addBoard(12, -HALF_L - 3.0, 0, Math.PI / 2, 'HOOPFRAME ARENA  •  ');
@@ -807,6 +813,7 @@ function ledTexture(text, bg, fg) {
 
 /* ---------- hoops ---------- */
 let activeNet = null;
+const nets = [];                                   // [+x basket, -x basket]
 function makeNet() {
   // diamond-mesh net: 12 cords per ring, alternating offsets
   const rings = 6, cords = 12, h = 0.44, pts = [];
@@ -858,7 +865,8 @@ function makeHoop(mirror) {
   const armPad = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 1.85), pad);
   armPad.position.set(BB_X + 0.03, BB.y0 - 0.06, 0); g.add(armPad);
 
-  if (mirror) g.rotation.y = Math.PI; else activeNet = net;
+  if (mirror) g.rotation.y = Math.PI;
+  nets[mirror ? 1 : 0] = net; activeNet = nets[0];
   scene.add(g);
 }
 makeHoop(false);
@@ -925,6 +933,17 @@ function jerseyTexture(t, num) {
   for (const x of [256, 0, 512]) { g.strokeText(String(num), x, x === 256 ? 190 : 176); g.fillText(String(num), x, x === 256 ? 190 : 176); }
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; return tex;
 }
+// officials' shirt: 1-inch black and white vertical stripes, black collar
+function refShirtTexture() {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f2f2ef'; g.fillRect(0, 0, 512, 256);
+  g.fillStyle = '#121212';
+  for (let k = 0; k < 22; k++) g.fillRect(k * 512 / 22, 0, 512 / 44, 256);
+  g.fillRect(0, 0, 512, 14);
+  for (let i = 0; i < 6000; i++) { g.fillStyle = vrandom() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.05)'; g.fillRect(vrandom() * 512, vrandom() * 256, 1.5, 1.5); }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; return tex;
+}
 function shortsTexture(t) {
   const c = document.createElement('canvas'); c.width = 256; c.height = 128;
   const g = c.getContext('2d');
@@ -947,15 +966,20 @@ const hairGeo = new THREE.SphereGeometry(0.113, 24, 12, 0, Math.PI * 2, 0, Math.
 const handGeo = new THREE.SphereGeometry(0.045, 12, 10).scale(0.75, 1.55, 0.45);
 const jointGeo = new THREE.SphereGeometry(1, 14, 10);
 
+// team < 0 builds an official: striped short-sleeved shirt, black trousers, socks and shoes
 function makeAthlete(team, num) {
-  const t = TEAMS[team];
-  const skin = new THREE.MeshPhysicalMaterial({ color: pick(SKIN), roughness: 0.5, sheen: 0.25, sheenColor: new THREE.Color(0xffd0b0), clearcoat: 0.08 });
-  const jersey = new THREE.MeshPhysicalMaterial({ map: jerseyTexture(t, num), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff) });
-  const shorts = new THREE.MeshPhysicalMaterial({ map: shortsTexture(t), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide });
-  const sockMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.9 });
-  const shoeMat = new THREE.MeshPhysicalMaterial({ color: t.shoe, roughness: 0.4, clearcoat: 0.5 });
-  const soleMat = new THREE.MeshStandardMaterial({ color: t.sole, roughness: 0.6 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: pick(HAIR), roughness: 0.95 });
+  const ref = team < 0, t = ref ? null : TEAMS[team];
+  const pk = ref ? (arr) => arr[(vrandom() * arr.length) | 0] : pick;   // officials' looks are cosmetic: visual RNG
+  const skin = new THREE.MeshPhysicalMaterial({ color: pk(SKIN), roughness: 0.5, sheen: 0.25, sheenColor: new THREE.Color(0xffd0b0), clearcoat: 0.08 });
+  const jersey = new THREE.MeshPhysicalMaterial({ map: ref ? refShirtTexture() : jerseyTexture(t, num), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff) });
+  const shorts = ref
+    ? new THREE.MeshPhysicalMaterial({ color: 0x141414, roughness: 0.7, sheen: 0.25, sheenRoughness: 0.6, sheenColor: new THREE.Color(0x888888), side: THREE.DoubleSide })
+    : new THREE.MeshPhysicalMaterial({ map: shortsTexture(t), roughness: 0.8, sheen: 0.3, sheenRoughness: 0.6, sheenColor: new THREE.Color(0xffffff), side: THREE.DoubleSide });
+  const legMat = ref ? shorts : skin;                // trousers
+  const sockMat = new THREE.MeshStandardMaterial({ color: ref ? 0x101010 : 0xf2f2f2, roughness: 0.9 });
+  const shoeMat = new THREE.MeshPhysicalMaterial({ color: ref ? 0x0c0c0c : t.shoe, roughness: 0.4, clearcoat: 0.5 });
+  const soleMat = new THREE.MeshStandardMaterial({ color: ref ? 0x1a1a1a : t.sole, roughness: 0.6 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: pk(HAIR), roughness: 0.95 });
   const meshes = [];
   const add = (parent, geo, mat, x = 0, y = 0, z = 0, s) => {
     const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); if (s) m.scale.set(...s);
@@ -967,11 +991,11 @@ function makeAthlete(team, num) {
   const legs = [];
   for (const s of [1, -1]) {                         // s=1 left (+x), s=-1 right (-x) when facing +z
     const hip = new THREE.Group(); hip.position.set(s * 0.1, -0.02, 0); pelvis.add(hip);
-    add(hip, cyl(0.088, 0.062, 0.47), skin);
+    add(hip, cyl(0.088, 0.062, 0.47), legMat);
     const knee = new THREE.Group(); knee.position.y = -0.47; hip.add(knee);
-    add(knee, jointGeo, skin, 0, 0, 0.005, [0.06, 0.065, 0.062]);
-    add(knee, cyl(0.06, 0.04, 0.45), skin);
-    add(knee, jointGeo, skin, 0, -0.13, -0.025, [0.048, 0.1, 0.045]);   // calf
+    add(knee, jointGeo, legMat, 0, 0, 0.005, [0.06, 0.065, 0.062]);
+    add(knee, cyl(0.06, 0.04, 0.45), legMat);
+    add(knee, jointGeo, legMat, 0, -0.13, -0.025, [0.048, 0.1, 0.045]);   // calf
     add(knee, cyl(0.047, 0.044, 0.15), sockMat, 0, -0.32, 0);
     const ankle = new THREE.Group(); ankle.position.y = -0.46; knee.add(ankle);
     add(ankle, shoeGeo, shoeMat, 0, -0.005, 0.05);
@@ -990,8 +1014,9 @@ function makeAthlete(team, num) {
   const arms = [];
   for (const s of [1, -1]) {
     const sh = new THREE.Group(); sh.position.set(s * 0.235, 0.53, 0); spine.add(sh);
-    add(sh, jointGeo, skin, 0, -0.01, 0, [0.07, 0.068, 0.068]);       // deltoid
+    add(sh, jointGeo, ref ? jersey : skin, 0, -0.01, 0, [0.07, 0.068, 0.068]);       // deltoid
     add(sh, cyl(0.05, 0.042, 0.29), skin);
+    if (ref) add(sh, cyl(0.062, 0.056, 0.15), jersey);               // short sleeve
     const el = new THREE.Group(); el.position.y = -0.29; sh.add(el);
     add(el, jointGeo, skin, 0, 0, 0, [0.043, 0.043, 0.043]);
     add(el, cyl(0.042, 0.031, 0.26), skin);
@@ -1024,7 +1049,7 @@ const contactMat = (() => {
 /* =========================================================
    Game state
    ========================================================= */
-const SPOTS = [
+const SPOTS0 = [                                 // offensive spots for the +x basket
   new THREE.Vector3(RIM.x - 8.0, 0, 0),         // 0 top of the key
   new THREE.Vector3(RIM.x - 6.3, 0, -4.7),      // 1 left wing
   new THREE.Vector3(RIM.x - 6.3, 0, 4.7),       // 2 right wing
@@ -1035,6 +1060,13 @@ const SPOTS = [
   new THREE.Vector3(RIM.x - 5.0, 0, -1.9),      // 7 left elbow
   new THREE.Vector3(RIM.x - 5.0, 0, 1.9),       // 8 right elbow
 ];
+const SPOTS = SPOTS0.map((v) => v.clone());        // the same spots at the basket being attacked
+// Point play at team t's basket: the half court is rotated 180 degrees about the centre for the -x end.
+function setAttack(t) {
+  GM.dir = ATTACK[t];
+  RIM.copy(RIMS[t]);
+  SPOTS.forEach((v, k) => v.set(GM.dir * SPOTS0[k].x, 0, GM.dir * SPOTS0[k].z));
+}
 const players = [];
 for (let team = 0; team < 2; team++) for (let i = 0; i < 5; i++) {
   const num = ROSTERS[team][i];
@@ -1050,9 +1082,31 @@ for (let team = 0; team < 2; team++) for (let i = 0; i < 5; i++) {
   p.rig.meshes.forEach((m) => { m.userData.pid = p.idx; });
   players.push(p);
 }
+// Two officials in two-person mechanics. REF-1 works the -z side of the court and REF-2 the +z side. Facing the
+// basket being attacked, the trail is on the sideline to the left, level with or behind the ball; the lead is on the
+// end line beyond that basket, on the other side of the lane, closing toward the lane when the ball is on the far
+// side. On a change of possession the trail runs ahead down their sideline to become the new lead and the lead becomes
+// the new trail, so each official stays on their own side.
+const refs = [];
+for (const side of [-1, 1]) {
+  const k = refs.length;
+  const r = {
+    ref: true, side, team: -1, i: -1, num: 0, label: `Referee ${k + 1}`, s: [0.915, 0.94][k], role: 'trail',
+    pos: new THREE.Vector3(), yaw: 0, speed: 0, move: new THREE.Vector2(0, 1), target: new THREE.Vector3(),
+    stride: 1.3 + 2.1 * k, jumpY: 0, jumpV: 0, onGround: true, action: 'none', actT: 0, raise: 0, crouch: 0,
+    rig: makeAthlete(-1, 0),
+  };
+  r.idx = players.length + k;
+  r.id = `REF-${k + 1}`;
+  r.rig.meshes.forEach((m) => { m.userData.pid = r.idx; });
+  refs.push(r);
+}
+const bodies = [...players, ...refs];
 const UP = new THREE.Vector3(0, 1, 0);
 const tA = new THREE.Vector3(), tB = new THREE.Vector3(), tC = new THREE.Vector3(), tD = new THREE.Vector3();
-const GM = { off: 0, handler: null, clear: true, decideT: 1, passes: 0, phase: 'play', relocT: 3, looseT: 0, allow: [0, 1], driving: false, driveT: 0, driveTarget: new THREE.Vector3(), simTime: 0 };
+const GM = { off: 0, handler: null, clear: true, decideT: 1, passes: 0, phase: 'play', relocT: 3, looseT: 0, allow: [0, 1], driving: false, driveT: 0, driveTarget: new THREE.Vector3(), driveMax: 2.4, simTime: 0, dir: 1,
+  // transition after a change of possession: inbound or outlet pass, then the ball pushed up the floor
+  trans: { active: false, t: 0, team: 0, from: '', recv: null, recvSpot: new THREE.Vector3(), inbounder: null, inSpot: new THREE.Vector3(), breakT: 0 } };
 const BALL = { mode: 'held', holder: null, pos: new THREE.Vector3(), vel: new THREE.Vector3(), omega: new THREE.Vector3(), pass: null, stillT: 0, dribble: 0 };
 const shot = { active: false, done: true, made: false, rim: false, board: false, three: false, floor: false, team: 0, shooter: null };
 const stats = { pts: [0, 0], fgm: 0, fga: 0, tpm: 0, tpa: 0, log: [] };
@@ -1065,8 +1119,8 @@ function local(p, lx, ly, lz, out) {
   lx *= p.s; lz *= p.s;
   return out.set(p.pos.x + lx * c + lz * s, ly, p.pos.z - lx * s + lz * c);
 }
-function isThree(pos) {
-  if (Math.abs(pos.z) > CORNER_Z && pos.x > RIM.x - Math.sqrt(ARC_R * ARC_R - CORNER_Z * CORNER_Z)) return true;
+function isThree(pos) {                           // relative to the basket being attacked
+  if (Math.abs(pos.z) > CORNER_Z && GM.dir * pos.x > Math.abs(RIM.x) - Math.sqrt(ARC_R * ARC_R - CORNER_Z * CORNER_Z)) return true;
   return Math.hypot(RIM.x - pos.x, pos.z) > ARC_R;
 }
 function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
@@ -1096,31 +1150,106 @@ function assignSpots(team) {
   const h = players.find((p) => p.team === 0 && p.spot === 0);
   giveBall(h, false, 'tipoff');
   GM.clear = false; GM.decideT = 1.2;
+  BALL.pos.copy(h.pos);
+  for (const r of refs) { refTarget(r, r.pos); r.yaw = Math.atan2(h.pos.x - r.pos.x, h.pos.z - r.pos.z); }
 })();
+
+/* ---------- officials ---------- */
+function refTarget(r, out) {
+  const lead = r.side === GM.dir;                   // facing the attacked basket, the lead is on the right (+z for +x)
+  r.role = lead ? 'lead' : 'trail';
+  const u = GM.dir * BALL.pos.x;                    // ball position along the attack
+  if (lead) {
+    out.set(GM.dir * (HALF_L + 0.55), 0, r.side * clamp(2.6 + 0.35 * r.side * BALL.pos.z, 0.9, HALF_W - 1.2));
+    if (Math.abs(r.pos.x - out.x) > 4) out.z = r.side * (HALF_W + 0.35);   // run down the sideline, then onto the end line
+  } else {
+    out.set(GM.dir * clamp(u - 2.2, -HALF_L + 3, Math.abs(RIM.x) - 5.6), 0, r.side * (HALF_W + 0.35));
+  }
+  return out;
+}
+function moveRefs(dt) {
+  for (const r of refs) {
+    r.actT += dt;
+    const g = refTarget(r, r.target), d = distXZ(r.pos, g);
+    moveToward(r, g, d > 3 ? 6.6 : d > 0.8 ? 3.5 : 2.0, dt, d > 3 ? null : BALL.pos);
+    r.pos.x = clamp(r.pos.x, -HALF_L - 1.6, HALF_L + 1.6);
+    r.pos.z = clamp(r.pos.z, -HALF_W - 1.2, HALF_W + 1.2);
+  }
+}
 
 function giveBall(p, changed, how = 'catch') {
   const prevTeam = GM.off;
   // a rebound caught off the rim/board before the ball reaches the floor still ends the shot as a miss
   if (shot.active && !shot.done && BALL.mode === 'free') finishShot(false);
   GM.off = p.team; GM.handler = p;
+  if (GM.dir !== ATTACK[p.team]) setAttack(p.team);
   BALL.mode = 'held'; BALL.holder = p; BALL.pass = null;
   GM.phase = 'play'; GM.driving = false; GM.looseT = 0;
   for (const q of players) if (q.action === 'receive' || q.action === 'rebound') q.action = 'none';
   p.action = 'catch'; p.actT = 0;
   if (changed) {
-    GM.passes = 0; GM.clear = !isThree(p.pos) || distXZ(p.pos, RIM) < 7.6;
+    const d = distXZ(p.pos, RIM);
+    GM.passes = 0; GM.clear = !isThree(p.pos) || d < 7.6 || d > 9.5;   // inside the arc or in the backcourt: bring it out / up
     assignSpots(p.team);
     GM.decideT = 1.2;
   } else {
-    GM.clear = false;
+    GM.clear = distXZ(p.pos, RIM) > 11;              // caught in the backcourt: keep bringing it up
     GM.decideT = distXZ(p.pos, RIM) < 2.6 ? 0.35 : rand(0.7, 2.0);
   }
   emit(how, { player: p.id, team: TEAMS[p.team].short, ...(how === 'rebound' ? { offensive: p.team === shot.team, shot_id: shot.id } : {}) });
   if (changed || p.team !== prevTeam || how === 'tipoff') emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
+  if (changed && (how === 'inbound' || distXZ(p.pos, RIM) > 11)) startTransition(p, how);
+}
+
+/* ---------- transition ---------- */
+// After a defensive rebound the rebounder usually outlets to a guard on the wing; after a basket the nearest player
+// steps out behind the end line and inbounds to a guard. The handler then pushes the ball up the floor while the
+// others sprint to their spots, filling the lanes, and the defence sprints back to its basket. If nobody is back,
+// the handler attacks the rim; a teammate who has beaten their defender down the floor gets the ball ahead.
+function startTransition(p, how) {
+  const T = GM.trans;
+  Object.assign(T, { active: true, t: 0, team: p.team, from: how === 'inbound' ? 'made_basket' : how === 'rebound' ? 'defensive_rebound' : how, recv: null, inbounder: null, breakT: 0.6 });
+  const mates = teamOf(p.team).filter((q) => q !== p);
+  const nearest = (pt) => mates.reduce((a, b) => (distXZ(a.pos, pt) <= distXZ(b.pos, pt) ? a : b));
+  if (how === 'inbound') {
+    const side = rng() < 0.5 ? 1 : -1;
+    T.inbounder = p;
+    T.inSpot.set(-GM.dir * (HALF_L + 0.45), 0, side * 1.4);
+    T.recvSpot.set(-GM.dir * (HALF_L - 4.2), 0, -side * 2.6);
+    T.recv = nearest(T.recvSpot);
+  } else if (how === 'rebound' && rng() < 0.65) {
+    const side = Math.abs(p.pos.z) > 0.5 ? Math.sign(p.pos.z) : rng() < 0.5 ? 1 : -1;
+    T.recvSpot.set(p.pos.x + GM.dir * 5.5, 0, side * (HALF_W - 2.2));
+    T.recv = nearest(T.recvSpot);
+  }
+  emit('transition_start', { team: TEAMS[p.team].short, from: T.from, attack_dir: GM.dir, handler: p.id, first_pass_to: T.recv ? T.recv.id : null });
+}
+function endTransition(result) {
+  const T = GM.trans;
+  if (!T.active) return;
+  T.active = false; T.recv = null; T.inbounder = null;
+  emit('transition_end', { team: TEAMS[T.team].short, result, duration_s: r4(T.t) });
+}
+function fastBreak(h, dH) {
+  if (dH > 13) return;
+  const defs = teamOf(1 - h.team);
+  if (dH < 10 && !defs.some((d) => distXZ(d.pos, RIM) < dH - 0.3)) {   // nobody back: attack the rim
+    GM.clear = false; GM.driving = true; GM.driveT = 0; GM.driveMax = 3.2;
+    const dir = tA.set(h.pos.x - RIM.x, 0, h.pos.z - RIM.z).normalize();
+    GM.driveTarget.set(RIM.x + dir.x * 1.2, 0, RIM.z + dir.z * 1.2);
+    return endTransition('fast_break');
+  }
+  let best = null, bestD = 1e9;
+  for (const m of teamOf(h.team)) {
+    if (m === h) continue;
+    const dm = distXZ(m.pos, RIM), open = Math.min(...defs.map((d) => distXZ(d.pos, m.pos)));
+    if (dm < dH - 2.5 && dm < 7 && open > 2.0 && distXZ(m.pos, h.pos) < 15 && dm < bestD) { best = m; bestD = dm; }
+  }
+  if (best && rng() < 0.5) { GM.clear = false; startPass(h, best, 'ahead'); endTransition('fast_break'); }
 }
 
 /* ---------- decisions ---------- */
-function startPass(from, to) {
+function startPass(from, to, purpose = null) {
   const d = distXZ(from.pos, to.pos);
   BALL.mode = 'pass';
   BALL.pass = { from, to, t: 0, dur: 0.22 + d / 13, p0: BALL.pos.clone(), bounce: d > 3 && d < 7 && rng() < 0.25 };
@@ -1128,7 +1257,7 @@ function startPass(from, to) {
   from.action = 'pass'; from.actT = 0;
   to.action = 'receive'; to.actT = 0;
   GM.handler = null;
-  emit('pass', { from: from.id, to: to.id, team: TEAMS[from.team].short, kind: BALL.pass.bounce ? 'bounce' : 'chest', distance: r4(d) });
+  emit('pass', { from: from.id, to: to.id, team: TEAMS[from.team].short, kind: BALL.pass.bounce ? 'bounce' : 'chest', purpose, distance: r4(d) });
 }
 function startShot(p) {
   p.action = 'gather'; p.actT = 0;
@@ -1143,7 +1272,7 @@ function decide(h) {
   const shootP = GM.passes >= 4 ? 0.85 : GM.passes >= 1 ? (space > 1.6 ? 0.5 : 0.22) : 0.08;
   if (rng() < shootP && dRim < 8.6) return startShot(h);
   if (dRim < 9.5 && rng() < 0.2) {
-    GM.driving = true; GM.driveT = 0;
+    GM.driving = true; GM.driveT = 0; GM.driveMax = 2.4;
     const dir = tA.set(h.pos.x - RIM.x, 0, h.pos.z - RIM.z).normalize();
     GM.driveTarget.set(RIM.x + dir.x * 1.5, 0, RIM.z + dir.z * 1.5);
     return;
@@ -1183,9 +1312,10 @@ function finishShot(made) {
     stats.pts[shot.team] += pts; stats.fgm++; if (shot.three) stats.tpm++;
     const kind = !shot.rim && !shot.board ? 'Swish' : shot.board ? 'Bank' : 'Rim in';
     callout(`${who} · ${kind} +${pts}`, false);
-    netPulse = 1;
+    activeNet = nets[shot.team]; netPulse = 1;
     GM.allow = [1 - shot.team];                      // other team takes it out
     GM.off = 1 - shot.team;
+    setAttack(GM.off);                               // and attacks the other end: everyone else heads up the floor
     assignSpots(GM.off);
   } else {
     callout(`${who} · ${!shot.rim && !shot.board ? 'Airball' : 'Miss'}`, true);
@@ -1209,16 +1339,16 @@ function collideBox(box, e) {
   const n = tC.set(BALL.pos.x - cx, BALL.pos.y - cy, BALL.pos.z - cz);
   const d = n.length();
   if (d >= BALL_R) return false;
-  if (d < 1e-6) n.set(-1, 0, 0); else n.multiplyScalar(1 / d);
+  if (d < 1e-6) n.set(-Math.sign(box.x0), 0, 0); else n.multiplyScalar(1 / d);
   BALL.pos.set(cx, cy, cz).addScaledVector(n, BALL_R);
   const vn = BALL.vel.dot(n);
   if (vn < 0) BALL.vel.addScaledVector(n, -(1 + e) * vn);
   return true;
 }
-function collideRim() {
-  const dx = BALL.pos.x - RIM.x, dz = BALL.pos.z - RIM.z, h = Math.hypot(dx, dz);
-  const px = h < 1e-6 ? RIM.x + RIM_R : RIM.x + (dx / h) * RIM_R;
-  const pz = h < 1e-6 ? RIM.z : RIM.z + (dz / h) * RIM_R;
+function collideRim(R) {
+  const dx = BALL.pos.x - R.x, dz = BALL.pos.z - R.z, h = Math.hypot(dx, dz);
+  const px = h < 1e-6 ? R.x + RIM_R : R.x + (dx / h) * RIM_R;
+  const pz = h < 1e-6 ? R.z : R.z + (dz / h) * RIM_R;
   const n = tC.set(BALL.pos.x - px, BALL.pos.y - RIM_H, BALL.pos.z - pz);
   const d = n.length(), min = BALL_R + 0.01;
   if (d >= min) return false;
@@ -1235,8 +1365,8 @@ function stepBall(dt) {
   const hr = Math.hypot(BALL.pos.x - RIM.x, BALL.pos.z - RIM.z);
   if (hr < RIM_R && BALL.pos.y < RIM_H && BALL.pos.y > RIM_H - 0.45) BALL.vel.multiplyScalar(1 - 2.5 * dt);
   if (shot.active && !shot.done && prevY >= RIM_H && BALL.pos.y < RIM_H && BALL.vel.y < 0 && hr < RIM_R - 0.025) finishShot(true);
-  if (collideRim()) shot.rim = true;
-  if (collideBox(BB, 0.62)) shot.board = true;
+  for (const R of RIMS) if (collideRim(R)) shot.rim = true;
+  for (const B of BBS) if (collideBox(B, 0.62)) shot.board = true;
   if (BALL.pos.y < BALL_R) {
     BALL.pos.y = BALL_R;
     if (BALL.vel.y < 0) {
@@ -1271,13 +1401,25 @@ function guardTarget(def, man, out) {
   const toR = tD.set(RIM.x - man.pos.x, 0, RIM.z - man.pos.z);
   const L = toR.length() || 1;
   const onBall = BALL.holder === man || (BALL.pass && BALL.pass.to === man);
-  const gap = onBall ? 1.05 : L > 8 ? 2.3 : 1.7;
-  out.set(man.pos.x + (toR.x / L) * Math.min(gap, L - 0.3), 0, man.pos.z + (toR.z / L) * Math.min(gap, L - 0.3));
-  if (!onBall && BALL.mode !== 'free') out.lerp(BALL.pos, 0.18).setY(0);
+  // In range, stay `gap` off the man on the line to the basket. Farther out (transition), get back: hold a spot
+  // between the man and the basket that only slowly follows them up the floor, picking the ball up near half court.
+  const gap = onBall ? 1.05 : 1.7, Lp = onBall ? 10 : 8;
+  const r = L <= Lp ? L - Math.min(gap, L - 0.3) : Lp - gap + (L - Lp) * (onBall ? 0.4 : 0.15);
+  out.set(RIM.x - (toR.x / L) * r, 0, RIM.z - (toR.z / L) * r);
+  if (!onBall && BALL.mode !== 'free') out.lerp(BALL.pos, 0.18 * clamp((Lp + 2 - L) / 2, 0, 1)).setY(0);
   return out;
 }
+// off the ball: sprint to a spot that is far away (up the floor in transition, filling a lane), else move into it
+function runToSpot(p, dt) {
+  const far = distXZ(p.pos, SPOTS[p.spot]) > 4;
+  moveToward(p, SPOTS[p.spot], far ? 6.4 + 0.2 * (p.i % 3) : 3.6, dt, far ? null : BALL.pos);
+}
+function defend(p, man, dt, face) {
+  const g = guardTarget(p, man, tA), far = distXZ(p.pos, g) > 2.5;
+  moveToward(p, g, far ? 6.9 : 5.2, dt, far ? null : face);
+}
 function clampCourt(p) {
-  p.pos.x = clamp(p.pos.x, -2, HALF_L + 1.6);
+  p.pos.x = clamp(p.pos.x, -HALF_L - 1.6, HALF_L + 1.6);
   p.pos.z = clamp(p.pos.z, -HALF_W - 1.2, HALF_W + 1.2);
 }
 
@@ -1286,6 +1428,11 @@ function simStep(dt) {
   GM.simTime += dt;
   for (const p of players) p.actT += dt;
   const offTeam = GM.off;
+  if (GM.trans.active) {
+    GM.trans.t += dt;
+    if (GM.phase !== 'play') endTransition('shot');
+    else if (GM.trans.t > 12) endTransition('timeout');
+  }
 
   // ---- ball ----
   if (BALL.mode === 'held') {
@@ -1307,8 +1454,8 @@ function simStep(dt) {
       }
       turnTo(h, RIM.x - h.pos.x, RIM.z - h.pos.z, dt, 14);
       if (t >= 0.75) release(h);
-    } else if (h.action === 'catch' && h.actT < 0.28) {
-      local(h, 0, 1.25 * h.s, 0.38, BALL.pos);
+    } else if ((h.action === 'catch' && h.actT < 0.28) || GM.trans.inbounder === h) {
+      local(h, 0, 1.25 * h.s, 0.38, BALL.pos);         // caught, or held out of bounds for the inbound
       BALL.dribble = 0;
     } else {
       BALL.dribble += dt * (7 + h.speed * 0.9);
@@ -1399,28 +1546,43 @@ function simStep(dt) {
       moveToward(p, tA.set(BALL.pos.x, 0, BALL.pos.z), 5.6, dt, BALL.pos);
     } else if (BALL.holder === p && p.action !== 'catch') {
       // ball handler
-      let target;
-      if (GM.clear) {
+      const T = GM.trans;
+      let target, spd = GM.driving ? 4.8 : 3.2, face = null;
+      if (T.inbounder === p) {
+        // step out behind the end line, then inbound to the guard
+        target = T.inSpot; spd = 3.4; face = T.recv.pos;
+        if ((distXZ(p.pos, target) < 0.35 && T.t > 1.2 && distXZ(T.recv.pos, T.recvSpot) < 1.2) || T.t > 5) {
+          const r = T.recv; T.inbounder = null; T.recv = null; startPass(p, r, 'inbound');
+        }
+      } else if (GM.clear) {
         target = SPOTS[0];
-        if (isThree(p.pos) && distXZ(p.pos, target) < 1.6) { GM.clear = false; GM.decideT = rand(0.6, 1.4); }
+        const dH = distXZ(p.pos, RIM);
+        if (dH > 10) spd = 5.6;                       // pushing it up the floor
+        if (T.active && T.recv) {
+          if (p.action === 'none' && T.t > 0.5 && (distXZ(T.recv.pos, T.recvSpot) < 2 || T.t > 1.8)) { const r = T.recv; T.recv = null; startPass(p, r, 'outlet'); }
+        } else if (T.active && (T.breakT -= dt) <= 0) { T.breakT = 0.3; fastBreak(p, dH); }
+        if (GM.clear && isThree(p.pos) && distXZ(p.pos, target) < 1.6) { GM.clear = false; GM.decideT = rand(0.6, 1.4); endTransition('set_offense'); }
       } else if (GM.driving) {
         target = GM.driveTarget;
         GM.driveT += dt;
-        if (distXZ(p.pos, target) < 0.35 || GM.driveT > 2.4) startShot(p);
+        if (distXZ(p.pos, target) < 0.35 || GM.driveT > GM.driveMax) startShot(p);
       } else {
         target = SPOTS[p.spot];
         GM.decideT -= dt;
         if (GM.decideT <= 0 && p.action === 'none') decide(p);
       }
-      if (p.action !== 'gather') moveToward(p, target, GM.driving ? 4.8 : 3.2, dt, GM.driving || distXZ(p.pos, target) > 0.5 ? null : RIM);
+      if (p.action !== 'gather') moveToward(p, target, spd, dt, face || (GM.driving || distXZ(p.pos, target) > 0.5 ? null : RIM));
     } else if (p.action === 'receive') {
       p.speed = lerp(p.speed, 0, 1 - Math.exp(-8 * dt));
       turnTo(p, BALL.pos.x - p.pos.x, BALL.pos.z - p.pos.z, dt, 10);
+    } else if (GM.trans.recv === p) {               // first pass of the transition: get open for it
+      const d = distXZ(p.pos, GM.trans.recvSpot);
+      moveToward(p, GM.trans.recvSpot, d > 1.5 ? 6.0 : 3.0, dt, d < 1.5 ? BALL.pos : null);
     } else if (isOff && GM.phase === 'play') {
-      moveToward(p, SPOTS[p.spot], 3.6, dt, BALL.pos);
+      runToSpot(p, dt);
     } else if (!isOff && GM.phase === 'play') {
       const man = teamOf(GM.off).find((q) => q.i === p.i);
-      moveToward(p, guardTarget(p, man, tA), 5.2, dt, man === BALL.holder ? man.pos : BALL.pos);
+      defend(p, man, dt, man === BALL.holder ? man.pos : BALL.pos);
     } else {
       // shot in the air / loose ball, not chasing: crash or box out
       if (crashers.has(p)) {
@@ -1431,10 +1593,10 @@ function simStep(dt) {
         const toR = tB.set(RIM.x - man.pos.x, 0, RIM.z - man.pos.z).normalize();
         moveToward(p, tA.set(man.pos.x + toR.x * 0.7, 0, man.pos.z + toR.z * 0.7), 4.6, dt, BALL.pos);
       } else if (p.team === GM.off) {
-        moveToward(p, SPOTS[p.spot], 3.6, dt, BALL.pos);
+        runToSpot(p, dt);
       } else {
         const man = teamOf(GM.off).find((q) => q.i === p.i);
-        moveToward(p, guardTarget(p, man, tA), 4.6, dt, BALL.pos);
+        defend(p, man, dt, BALL.pos);
       }
     }
     clampCourt(p);
@@ -1456,12 +1618,14 @@ function simStep(dt) {
     }
   }
 
-  // gait phase advances on the game clock, so a seed replays identical leg motion
-  for (const p of players) p.stride += dt * (2 + p.speed * 1.9);
+  moveRefs(dt);
 
-  // body separation
-  for (let a = 0; a < players.length; a++) for (let b = a + 1; b < players.length; b++) {
-    const p = players[a], q = players[b];
+  // gait phase advances on the game clock, so a seed replays identical leg motion
+  for (const p of bodies) p.stride += dt * (2 + p.speed * 1.9);
+
+  // body separation (officials included: they give way like anyone else)
+  for (let a = 0; a < bodies.length; a++) for (let b = a + 1; b < bodies.length; b++) {
+    const p = bodies[a], q = bodies[b];
     const dx = q.pos.x - p.pos.x, dz = q.pos.z - p.pos.z, d = Math.hypot(dx, dz), min = 0.58;
     if (d < min && d > 1e-4) {
       const push = (min - d) / 2;
@@ -1488,7 +1652,7 @@ function animate(p, dt) {
   let lean = 0.08 + 0.18 * a, drop = 0.03 * a - 0.035 * a * Math.abs(cs), headX = -lean * 0.6;
 
   const holder = BALL.holder === p;
-  const defending = p.team !== GM.off && GM.phase === 'play' && p.action === 'none';
+  const defending = !p.ref && p.team !== GM.off && GM.phase === 'play' && p.action === 'none';
   if (defending) {
     const man = teamOf(GM.off).find((q) => q.i === p.i);
     const st = clamp(1.6 - distXZ(p.pos, man.pos) / 3, 0, 1);
@@ -1553,8 +1717,8 @@ function animate(p, dt) {
    ========================================================= */
 // Camera layouts, picked with #cams-<name> in the URL (combine with a seed: #seed-123&cams-gym).
 // gym: the four fixed cameras of a real gym at their true places, two on each backboard support: a wide one viewing
-// its own half (NL, NR) and a narrow one viewing the far half (FL on the right support, FR on the left). Only the
-// attacked half (+x) has play, so NL and FL view an empty half. Each camera is placed relative to the backboard it is
+// its own half (NL, NR) and a narrow one viewing the far half (FL on the right support, FR on the left). Play changes
+// ends with possession, so every camera sees play in turn. Each camera is placed relative to the backboard it is
 // mounted on and aimed at a floor point relative to the backboard of the end it views, so the layout is exact with
 // #court-gym; on the arena court the narrow cameras stand 26.4 m instead of 20.4 m from the far baseline and players
 // there look about 23 % smaller. The wide cameras sit 8.5 cm in front of their backboard (the real ones look over its
@@ -1579,10 +1743,10 @@ const LAYOUTS = {
 };
 const LAYOUT = (() => { const m = /cams-(\w+)/.exec(location.hash); return m && LAYOUTS[m[1]] ? m[1] : null; })();
 const DEFAULTS = LAYOUT ? LAYOUTS[LAYOUT] : [
-  { name: 'Broadcast', pos: [3, 7.2, -18.5], target: [7, 1.2, 0], fov: 32, track: true, follow: false, subject: 'handler', res: [1280, 720] },
+  { name: 'Broadcast', pos: [0, 7.2, -18.5], target: [0, 1.2, 0], fov: 32, track: true, follow: false, subject: 'handler', res: [1280, 720] },
   { name: 'Behind Basket', pos: [16.2, 5.0, 0.6], target: [8, 1.6, 0], fov: 48, track: false, follow: false, subject: 'handler', res: [1280, 720] },
   { name: 'Player Follow', pos: [-3.8, 2.4, 2.2], target: [0, 1.4, 0], fov: 55, track: false, follow: true, subject: 'handler', res: [1280, 720] },
-  { name: 'Top-Down', pos: [6.5, 16, 0], target: [6.5, 0, 0], fov: 52, track: false, follow: false, subject: 'handler', res: [1280, 720] },
+  { name: 'Top-Down', pos: [0, 16, 0], target: [0, 0, 0], fov: 62, track: false, follow: false, subject: 'handler', res: [1280, 720] },
 ];
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const cams = DEFAULTS.map((d) => ({
@@ -1886,6 +2050,7 @@ function setPaused(p) { paused = p; $('btn-pause').textContent = p ? 'Play' : 'P
 $('btn-pause').addEventListener('click', () => setPaused(!paused));
 $('btn-shoot').addEventListener('click', () => {
   const h = BALL.holder;
+  if (h && GM.trans.inbounder === h) return;          // not from out of bounds
   if (BALL.mode === 'held' && h && h.action === 'none' && !GM.clear) { h.yaw = Math.atan2(RIM.x - h.pos.x, RIM.z - h.pos.z); startShot(h); }
   else if (BALL.mode === 'held' && h && GM.clear) { GM.clear = false; GM.decideT = 0; h.action = 'none'; h.yaw = Math.atan2(RIM.x - h.pos.x, RIM.z - h.pos.z); startShot(h); }
   if (paused) setPaused(false);
@@ -1962,6 +2127,7 @@ const ray = new THREE.Raycaster();
 function emit(type, data) {
   const e = { type, seq: ++eventSeq, session: SESSION, frame: REC.active ? REC.frame : Math.floor(GM.simTime * MQ.rate), t: r4(GM.simTime), ...data };
   if (REC.active || REC.stopping) REC.events.push(JSON.stringify(e));
+  if (eventLog) eventLog.push(e);
   mqttPub('events', e, 1);
 }
 function playerState(p) {
@@ -1974,6 +2140,16 @@ function playerState(p) {
     vel: [r4(p.move.x * p.speed), r4(p.onGround ? 0 : p.jumpV), r4(p.move.y * p.speed)],
     yaw: r4(p.yaw), speed: r4(p.speed), action: p.action, airborne: !p.onGround, has_ball: BALL.holder === p,
     keypoints,
+  };
+}
+function refState(r) {
+  r.rig.root.updateMatrixWorld(true);
+  const keypoints = {};
+  for (const n of KP_NAMES) keypoints[n] = v3(r.rig.kp[n].getWorldPosition(tW));
+  return {
+    id: r.id, track: r.idx, role: r.role, height_m: r4(1.98 * r.s),
+    pos: [r4(r.pos.x), 0, r4(r.pos.z)], vel: [r4(r.move.x * r.speed), 0, r4(r.move.y * r.speed)],
+    yaw: r4(r.yaw), speed: r4(r.speed), keypoints,
   };
 }
 function projectPt(cam, w, h, v, out) {
@@ -1990,7 +2166,7 @@ function occluded(cam, point, selfPid) {
   dir.multiplyScalar(1 / dist);
   ray.set(cam.position, dir);
   ray.near = 0; ray.far = dist - 0.06;
-  for (const q of players) {
+  for (const q of bodies) {
     if (q.idx === selfPid) continue;
     // cheap reject: closest approach of the ray to this player's body centre
     const c = tC2.set(q.pos.x, q.jumpY + q.s, q.pos.z).sub(cam.position);
@@ -2001,9 +2177,10 @@ function occluded(cam, point, selfPid) {
   return false;
 }
 function annotate(cam, w, h, fy) {
-  const pt = [0, 0, 0], near = cam.near, out = { players: [], ball: null };
+  const pt = [0, 0, 0], near = cam.near, out = { players: [], referees: [], ball: null };
   const clip = (x0, y0, x1, y1) => [clamp(x0, 0, w), clamp(y0, 0, h), clamp(x1, 0, w), clamp(y1, 0, h)];
-  for (const p of players) {
+  for (const p of bodies) {
+    const list = p.ref ? out.referees : out.players;
     p.rig.root.updateMatrixWorld(true);
     const kp2 = [];
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, dsum = 0, n = 0;
@@ -2014,14 +2191,14 @@ function annotate(cam, w, h, fy) {
       kp2.push(front ? [r1(pt[0]), r1(pt[1]), inImg ? 2 : 1] : [0, 0, 0]);
       if (front) { x0 = Math.min(x0, pt[0]); y0 = Math.min(y0, pt[1]); x1 = Math.max(x1, pt[0]); y1 = Math.max(y1, pt[1]); dsum += pt[2]; n++; }
     }
-    if (!n) { out.players.push({ id: p.id, track: p.idx, in_frame: false }); continue; }
+    if (!n) { list.push({ id: p.id, track: p.idx, in_frame: false }); continue; }
     const depth = dsum / n, pad = (fy * 0.12) / depth;     // ~12 cm of body around the skeleton
     x0 -= pad; y0 -= pad; x1 += pad; y1 += pad * 0.4;
     const [cx0, cy0, cx1, cy1] = clip(x0, y0, x1, y1);
     const inFrame = cx1 - cx0 > 1 && cy1 - cy0 > 1;
     let occ = 0;
     if (inFrame) for (const k of OCC_KPS) if (occluded(cam, p.rig.kp[k].getWorldPosition(tW), p.idx)) occ++;
-    out.players.push({
+    list.push({
       id: p.id, track: p.idx, in_frame: inFrame, truncated: inFrame && (cx0 !== x0 || cy0 !== y0 || cx1 !== x1 || cy1 !== y1),
       bbox: inFrame ? [r1(cx0), r1(cy0), r1(cx1 - cx0), r1(cy1 - cy0)] : null, bbox_unclipped: [r1(x0), r1(y0), r1(x1 - x0), r1(y1 - y0)],
       depth_m: r4(depth), occlusion: occ / OCC_KPS.length, keypoints_2d: kp2,
@@ -2054,7 +2231,8 @@ function cameraState(i, withAnnotations) {
 function snapshot(frame, withAnnotations) {
   return {
     session: SESSION, seed: SEED, frame, t: r4(GM.simTime), wall_ms: Date.now(),
-    possession: TEAMS[GM.off].short, phase: GM.phase,
+    possession: TEAMS[GM.off].short, phase: GM.phase, attack_dir: GM.dir,
+    transition: GM.trans.active ? { from: GM.trans.from, t: r4(GM.trans.t), team: TEAMS[GM.trans.team].short } : null,
     score: { [TEAMS[0].short]: stats.pts[0], [TEAMS[1].short]: stats.pts[1] },
     ball: {
       pos: v3(BALL.pos), vel: BALL.mode === 'free' ? v3(BALL.vel) : null, state: BALL.mode,
@@ -2062,6 +2240,7 @@ function snapshot(frame, withAnnotations) {
       shot_id: shot.active && !shot.done ? shot.id : null,
     },
     players: players.map(playerState),
+    referees: refs.map(refState),
     cameras: cams.map((_, i) => cameraState(i, withAnnotations)),
   };
 }
@@ -2074,6 +2253,7 @@ function statusPayload(online) {
   return {
     online, session: SESSION, seed: SEED, rate_hz: MQ.rate, recording: REC.active,
     teams: TEAMS.map((t, ti) => ({ short: t.short, name: t.name, players: teamOf(ti).map((p) => p.id) })),
+    referees: refs.map((r) => r.id),
     cameras: cams.map((c, i) => ({ id: i + 1, name: c.name })),
   };
 }
@@ -2089,6 +2269,7 @@ function mqttFrame(snap) {
   mqttPub('ball', { ...head, ...snap.ball });
   mqttPub('players', { ...head, players: snap.players });
   for (const pl of snap.players) mqttPub(`player/${pl.id}`, { ...head, ...pl });
+  mqttPub('referees', { ...head, referees: snap.referees });
   for (const c of snap.cameras) mqttPub(`camera/${c.id}`, { ...head, ...c });
 }
 function mqttTick() {
@@ -2259,7 +2440,7 @@ async function recStart() {
 function advanceStep() {
   simStep(STEP);
   REC.steps++;
-  for (const p of players) animate(p, STEP);
+  for (const p of bodies) animate(p, STEP);
   ballMesh.position.copy(BALL.pos);
   animateNet(STEP);
   updateCameras(STEP);
@@ -2271,7 +2452,7 @@ async function recTick() {
     // Frame k exposes steps [k*M, k*M + K - 1]; its labels describe the centre sample (index `lead`).
     const K = REC.samples, first = REC.frame * REC.stepsPerFrame;
     while (REC.steps < first) advanceStep();
-    if (REC.frame === 0) { for (const p of players) animate(p, STEP); ballMesh.position.copy(BALL.pos); updateCameras(STEP); }
+    if (REC.frame === 0) { for (const p of bodies) animate(p, STEP); ballMesh.position.copy(BALL.pos); updateCameras(STEP); }
     const cine = REC.quality === 'cinematic', pt = [0, 0, 0];
     const ballPath = [], ballPath2d = cams.map(() => []), times = [];
     let snap = null;
@@ -2332,14 +2513,15 @@ function manifest(frames, videoNames) {
       method: 'Each frame averages one rendered sub-frame per 240 Hz physics step across the exposure, in linear light. Camera motion is included. Per frame, groundtruth "exposure" gives the sample times and the 3D ball path, and each camera\'s ball annotation gives "path_2d".',
     },
     coordinate_system: {
-      units: 'metres', origin: 'centre court at floor level', x: `toward the attacked basket (rim centre x = ${r4(RIM.x)})`, y: 'up',
+      units: 'metres', origin: 'centre court at floor level', x: `toward the basket ${TEAMS[0].short} attacks (rim centre x = ${r4(RIMS[0].x)}); ${TEAMS[1].short} attacks the -x basket`, y: 'up',
       z: 'right-handed: z = x × y; CAM 1 sits on the -z sideline', yaw: 'radians; facing direction = (sin yaw, 0, cos yaw)',
     },
     camera_model: 'Pinhole, no lens distortion. OpenCV convention: [u v 1]^T ~ K (R X + t), origin at the top-left pixel corner, +u right, +v down; R, t map world to camera; camera looks along +z.',
-    court: { name: GYM ? 'gym' : 'arena', length: r4(2 * HALF_L), width: r4(2 * HALF_W), lane_width: r4(2 * LANE_HW), rim: v3(RIM), rim_height: RIM_H, rim_radius: RIM_R, ball_radius: BALL_R, three_point_radius: ARC_R, corner_three_z: CORNER_Z },
+    court: { name: GYM ? 'gym' : 'arena', length: r4(2 * HALF_L), width: r4(2 * HALF_W), lane_width: r4(2 * LANE_HW), rims: { [TEAMS[0].short]: v3(RIMS[0]), [TEAMS[1].short]: v3(RIMS[1]) }, rim_height: RIM_H, rim_radius: RIM_R, ball_radius: BALL_R, three_point_radius: ARC_R, corner_three_z: CORNER_Z },
     keypoints: KP_NAMES,
     keypoint_visibility: { 0: 'behind the camera', 1: 'in front of the camera but outside the image', 2: 'inside the image (self-occlusion not tested)' },
-    occlusion: 'Fraction of head, pelvis and both knees hidden from the camera by other players\' bodies. Hoop, stanchion and crowd are not tested.',
+    occlusion: 'Fraction of head, pelvis and both knees hidden from the camera by other players\' and referees\' bodies. Hoop, stanchion and crowd are not tested.',
+    referees: refs.map((r) => ({ id: r.id, track: r.idx, side: r.side < 0 ? '-z' : '+z', height_m: r4(1.98 * r.s) })),
     teams: TEAMS.map((t, ti) => ({ name: t.name, short: t.short, players: teamOf(ti).map((p) => ({ id: p.id, track: p.idx, number: p.num, height_m: r4(1.98 * p.s) })) })),
     cameras: REC.tracks.map((t, k) => ({ id: t.cam + 1, name: cams[t.cam].name, file: videoNames[k], width: t.w, height: t.h, codec: t.codec })),
     files: { groundtruth: 'groundtruth.jsonl', events: 'events.jsonl' },
@@ -2467,7 +2649,7 @@ function frame(now) {
       let n = 0;
       while (acc >= STEP && n++ < 60) { simStep(STEP); acc -= STEP; }
     }
-    for (const p of players) animate(p, sdt);
+    for (const p of bodies) animate(p, sdt);
     ballMesh.position.copy(BALL.pos);
     animateNet(sdt);
     updateCameras(paused ? 1 : rdt);
@@ -2479,7 +2661,7 @@ function frame(now) {
 }
 syncPanel();
 renderStats();
-for (const p of players) animate(p, 1);
+for (const p of bodies) animate(p, 1);
 // test hook: fast-forward the game logic without rendering
 const testState = () => ({ t: r4(GM.simTime), score: stats.pts.slice(), fga: stats.fga, fgm: stats.fgm, phase: GM.phase, off: GM.off, events: eventSeq, ball: v3(BALL.pos) });
 window.hoopframe = {
@@ -2487,11 +2669,14 @@ window.hoopframe = {
   advanceTo(t, withAnimation = false) {
     while (GM.simTime < t - 1e-9) {
       simStep(STEP);
-      if (withAnimation) { for (const p of players) animate(p, STEP); ballMesh.position.copy(BALL.pos); animateNet(STEP); updateCameras(STEP); }
+      if (withAnimation) { for (const p of bodies) animate(p, STEP); ballMesh.position.copy(BALL.pos); animateNet(STEP); updateCameras(STEP); }
     }
     return testState();
   },
   pose() { return players.map(playerState); },
+  referees() { return refs.map(refState); },
+  snapshot(withAnnotations = true) { return snapshot(Math.floor(GM.simTime * MQ.rate), withAnnotations); },   // a groundtruth.jsonl line for now
+  events() { const out = eventLog || []; eventLog = []; return out; },   // events since the last call (first call starts logging)
   profile() {
     const time = (fn) => { const t0 = performance.now(); fn(); return +(performance.now() - t0).toFixed(1); };
     return { snapshot_ms: time(() => snapshot(0, false)), snapshot_with_2d_ms: time(() => snapshot(0, true)), render_ms: time(render), json_kb: +(JSON.stringify(snapshot(0, true)).length / 1024).toFixed(1) };

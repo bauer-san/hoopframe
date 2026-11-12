@@ -1,9 +1,10 @@
 # Hoopframe
 
-Synthetic 5-on-5 half-court basketball with four configurable cameras. It produces ground truth for
-multi-view player tracking and shot attribution in two ways:
+Synthetic 5-on-5 full-court basketball with two referees and four configurable cameras. Possession changes ends
+after every score and defensive rebound, with transition runs up the floor. It produces ground truth for
+multi-view player and referee tracking and shot attribution in two ways:
 
-- **Live feed over MQTT**: ball, player and camera state, plus game events, published every tick.
+- **Live feed over MQTT**: ball, player, referee and camera state, plus game events, published every tick.
 - **Synchronized recorder**: one MP4 per camera, frame-locked to per-frame ground truth, saved as a ZIP.
 
 [![Four fixed cameras recording the same 12 seconds of play](docs/sample.gif)](docs/sample.mp4)
@@ -11,7 +12,8 @@ multi-view player tracking and shot attribution in two ways:
 *12 seconds from the built-in recorder: four fixed cameras, 640 × 360 each, 30 fps, 180° shutter (1/60 s,
 4 sub-frames per frame), seed `20261111`,
 simulation time 24–36 s. HAR-8 misses a three, HAR-11 grabs the offensive rebound and scores from 2.5 m.
-Click for the [full-quality MP4](docs/sample.mp4).*
+Click for the [full-quality MP4](docs/sample.mp4). Recorded with the earlier half-court version, before full-court
+play and referees; the same seed now plays out differently.*
 
 Everything is in `index.html`. Open it directly in **Chrome or Edge**: double-click it, or serve the folder with
 `python3 -m http.server`. The hosted artifact preview blocks network connections and downloads, so MQTT
@@ -42,10 +44,11 @@ HTTPS, the broker must be `wss://`, because browsers block `ws://` from secure p
 | `hoopframe/ball` | 0 | `pos`, `vel` (null while held), `state` (`held`/`pass`/`free`), `holder`, `pass_to`, `shot_id` |
 | `hoopframe/players` | 0 | All ten players |
 | `hoopframe/player/<id>` | 0 | One player, e.g. `hoopframe/player/HAR-23` |
+| `hoopframe/referees` | 0 | Both referees: `id`, `track`, `role` (`lead`/`trail`), position, velocity, keypoints |
 | `hoopframe/camera/<1-4>` | 0 | Calibration `K`, `R`, `t` and, if enabled, 2D `annotations` |
-| `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `possession`, `tipoff`, `recording_start`, `recording_stop` |
+| `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `possession`, `transition_start`, `transition_end`, `tipoff`, `recording_start`, `recording_stop` |
 | `hoopframe/recorder` | 1 | Recording start/stop markers with `take` and frame counts |
-| `hoopframe/status` | 1, retained | `online`, session, seed, roster. A last-will message flips it to `online: false` |
+| `hoopframe/status` | 1, retained | `online`, session, seed, roster, referees. A last-will message flips it to `online: false` |
 
 Every message carries `session`, `frame`, `t` (simulation seconds) and `wall_ms`. While idle, frames are
 published on the simulation clock at the chosen rate (`frame = floor(t * rate)`). While recording, they are
@@ -118,7 +121,8 @@ and its blur is included.
   "session": "20261111T152320-d7da", "seed": 20261111, "frame": 60, "t": 3.9583,
   "exposure": { "shutter_deg": 180, "duration_s": 0.016667, "samples": 4,
                 "start_t": 3.9542, "end_t": 3.9667, "mean_t": 3.9604, "ball_path": [[x, y, z] /* one per sub-frame */] },
-  "possession": "HAR", "phase": "play", "score": { "HAR": 4, "MSA": 2 },
+  "possession": "HAR", "phase": "play", "attack_dir": 1, "transition": { "from": "defensive_rebound", "t": 1.25, "team": "HAR" },
+  "score": { "HAR": 4, "MSA": 2 },
   "ball": { "pos": [x, y, z], "vel": null, "state": "held", "holder": "HAR-23", "pass_to": null, "shot_id": null },
   "players": [{
     "id": "HAR-23", "track": 2, "team": "HAR", "number": 23, "height_m": 2.01,
@@ -126,6 +130,8 @@ and its blur is included.
     "action": "none", "airborne": false, "has_ball": true,
     "keypoints": { "head_top": [x, y, z], "head": [], "neck": [], "shoulder_l": [] /* … 18 joints */ }
   }],
+  "referees": [{ "id": "REF-1", "track": 10, "role": "trail", "height_m": 1.81, "pos": [x, 0, z], "vel": [vx, 0, vz],
+                 "yaw": 0.4, "speed": 2.2, "keypoints": { /* same 18 joints */ } }],
   "cameras": [{
     "id": 1, "name": "Broadcast", "width": 1280, "height": 720, "fov_y": 32,
     "K": [[fx, 0, cx], [0, fy, cy], [0, 0, 1]], "R": [[]], "t": [],
@@ -134,6 +140,7 @@ and its blur is included.
       "players": [{ "id": "HAR-23", "track": 2, "in_frame": true, "truncated": false,
                     "bbox": [x, y, w, h], "bbox_unclipped": [x, y, w, h], "depth_m": 14.2,
                     "occlusion": 0.25, "keypoints_2d": [[u, v, visibility] /* 18, in "keypoints" order */] }],
+      "referees": [{ "id": "REF-1", "track": 10, /* same fields as players */ }],
       "ball": { "in_frame": true, "center": [u, v], "radius_px": 6.1, "bbox": [x, y, w, h], "depth_m": 15.0, "occluded": false,
                 "path_2d": [[u, v] /* one per sub-frame, null if behind the camera */] }
     }
@@ -143,19 +150,48 @@ and its blur is included.
 
 **Conventions**
 
-- **World:** metres, right-handed. The origin is centre court at floor level. `+x` points toward the attacked
-  basket (rim centre at `x = 12.7264`, `y = 3.05`), `+y` is up, and CAM 1's sideline is `-z`. Player `yaw`
-  is in radians, facing `(sin yaw, 0, cos yaw)`.
+- **World:** metres, right-handed. The origin is centre court at floor level. `+x` points toward the basket HAR
+  attacks (rim centre at `x = 12.7264`, `y = 3.05`); MSA attacks the `-x` basket. `attack_dir` is `+1` or `-1`, the
+  sign of the basket the team in possession attacks. `+y` is up, and CAM 1's sideline is `-z`. Player `yaw`
+  is in radians, facing `(sin yaw, 0, cos yaw)`. The manifest's `court.rims` gives both rims.
 - **Cameras:** pinhole, no distortion, OpenCV convention: `[u v 1]ᵀ ~ K (R·X + t)`. The pixel origin is the
   top-left corner, and the camera looks along `+z`. The recorded pixels have been checked against these
   annotations.
 - **Keypoints:** `head_top, head, neck, shoulder_l/r, elbow_l/r, wrist_l/r, pelvis, hip_l/r, knee_l/r,
   ankle_l/r, toe_l/r`. 2D visibility codes: `0` = behind the camera, `1` = outside the image,
   `2` = inside the image. Self-occlusion is not tested per keypoint.
-- **Occlusion:** the fraction of head, pelvis and both knees hidden from the camera by *other players'
-  bodies*. The ball's `occluded` flag uses any player body, including the holder's hands. The hoop,
-  stanchion and crowd are not tested.
-- **Player IDs:** `<team>-<number>` (`HAR-23`). `track` is a stable 0–9 integer.
+- **Occlusion:** the fraction of head, pelvis and both knees hidden from the camera by *other players' and
+  referees' bodies*. The ball's `occluded` flag uses any player or referee body, including the holder's hands.
+  The hoop, stanchion and crowd are not tested.
+- **IDs:** players are `<team>-<number>` (`HAR-23`) with `track` 0–9; referees are `REF-1` and `REF-2` with
+  `track` 10 and 11. Track numbers are stable for the whole session.
+
+### Transitions and referees
+
+A change of possession (a defensive rebound, a made basket, or a loose ball recovered by the other team) sends
+play to the other end:
+
+- **After a basket**, the nearest player of the team taking over steps out behind the end line and inbounds to a
+  guard (`pass` with `purpose: "inbound"`).
+- **After a defensive rebound**, the rebounder usually outlets to a guard on the wing (`purpose: "outlet"`), or
+  brings it up themselves.
+- The handler pushes the ball up the floor at about 5.6 m/s while teammates sprint to their spots at
+  6.4–6.8 m/s, filling the lanes. Defenders sprint back to a spot between their man and the basket and pick
+  them up as they come up the floor.
+- If no defender is back, the handler attacks the rim. A teammate who has beaten their defender down the floor may get
+  the ball ahead (`purpose: "ahead"`). Otherwise the offence sets up in the half court.
+
+`transition_start` gives `team`, `from` (`made_basket`, `defensive_rebound` or `recover`), `attack_dir`, `handler`
+and `first_pass_to`. `transition_end` gives `result` (`set_offense`, `fast_break`, `shot` or `timeout`) and
+`duration_s`. While a transition is running, every frame's `transition` field is set.
+
+The two referees use two-person mechanics. REF-1 works the `-z` side of the court and REF-2 the `+z` side.
+Facing the basket being attacked, the **trail** runs the sideline on the left, level with or behind the ball, no
+deeper than the free-throw line extended. The **lead** stands on the end line beyond that basket, between the lane
+and the sideline, closing toward the lane when the ball is on the far side. On a change of possession, the trail
+runs ahead down their own sideline to become the new lead, and the lead becomes the new trail. Referees wear
+black-and-white striped short-sleeved shirts, black trousers and black shoes. They are about 1.81 and 1.86 m tall,
+and players and referees step around each other.
 
 ### Shot attribution
 
@@ -186,10 +222,10 @@ Two URL options, combined with `&` (and a seed: `#seed-123&court-gym&cams-gym`):
 - `#court-gym` replaces the NBA arena with a real gym: a 70.3 × 45.05 ft (21.4 × 13.7 m) court with a 12 ft lane and
   a 19.75 ft three-point arc that runs straight to the baseline, pale maple to the walls, a red lane, white walls over
   a dark padded band 2.5 m beyond the baselines and 2 m beyond the sidelines, a dark 7 m ceiling with LED panels, and
-  benches with a few spectators along the end walls instead of stands. Play stays half court toward +x.
+  benches with a few spectators along the end walls instead of stands.
 - `#cams-gym` replaces the four default cameras with that gym's fixed cameras at their true places, all at
   1920 × 1080: two on each backboard support, a wide one viewing its own half (NL, NR) and a narrow one viewing the
-  far half (FL on the right support, FR on the left). NL and FL view the empty half. Each camera is placed relative
+  far half (FL on the right support, FR on the left). Each camera is placed relative
   to its backboard, so the layout is exact on the gym court. On the arena court the narrow cameras stand 26.4 m
   instead of 20.4 m from the far baseline, framing it as in the gym, and players there look about 23 % smaller.
 
@@ -216,8 +252,11 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   rendered (see [Shutter and motion blur](#shutter-and-motion-blur)), but there is no lens distortion,
   rolling shutter or sensor noise, so expect a domain gap against real broadcast footage. The per-frame
   calibration and labels let you add those effects in post-processing.
-- `window.hoopframe.advance(s)`, `advanceTo(t)` and `profile()` are test hooks for fast-forwarding and
-  timing the simulation. They do not render or record.
+- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `snapshot()`, `events()` and `profile()`
+  are test hooks for fast-forwarding, inspecting and timing the simulation. `snapshot()` returns the current
+  ground-truth line. `events()` returns the events since its previous call; the first call starts the log.
+  They do not render or record.
+- There are no fouls, free throws, steals, turnovers, shot clock or periods. Play runs continuously.
 
 ## License
 
