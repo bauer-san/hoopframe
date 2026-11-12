@@ -7,13 +7,13 @@ multi-view player and referee tracking and shot attribution in two ways:
 - **Live feed over MQTT**: ball, player, referee and camera state, plus game events, published every tick.
 - **Synchronized recorder**: one MP4 per camera, frame-locked to per-frame ground truth, saved as a ZIP.
 
-[![Four fixed cameras recording the same 12 seconds of play](docs/sample.gif)](docs/sample.mp4)
+[![The gym's four fixed cameras recording the same 12 seconds of full-court play](docs/sample.gif)](docs/sample.mp4)
 
-*12 seconds from the built-in recorder: four fixed cameras, 640 × 360 each, 30 fps, 180° shutter (1/60 s,
-4 sub-frames per frame), seed `20261111`,
-simulation time 24–36 s. HAR-8 misses a three, HAR-11 grabs the offensive rebound and scores from 2.5 m.
-Click for the [full-quality MP4](docs/sample.mp4). Recorded with the earlier half-court version, before full-court
-play and referees; the same seed now plays out differently.*
+*12 seconds from the built-in recorder on the gym court (`#court-gym&cams-gym`): the gym's four fixed cameras
+(NL wide, FL narrow, NR wide, FR narrow), 640 × 360 each, 30 fps, 180° shutter (1/60 s, 4 sub-frames per frame),
+seed `20261111`, simulation time 84.5–96.5 s. HAR-3 scores at the +x end; MSA inbounds under that basket, runs
+the floor in transition and MSA-0 scores at the −x end, with both referees switching ends.
+Click for the [full-quality MP4](docs/sample.mp4).*
 
 Everything is in `index.html`. Open it directly in **Chrome or Edge**: double-click it, or serve the folder with
 `python3 -m http.server`. The hosted artifact preview blocks network connections and downloads, so MQTT
