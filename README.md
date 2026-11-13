@@ -232,6 +232,54 @@ Two URL options, combined with `&` (and a seed: `#seed-123&court-gym&cams-gym`):
 The manifest's `court` block gives the court used (`name`, `length`, `width`, `lane_width`). **Reset this camera**
 returns to the layout's position.
 
+## Commentary
+
+The **Commentary** tab calls the game live. It does this from tracker-style data only, as a test of play-by-play
+built on a court tracker instead of on video. Every 1/30 s of game time it gets what a multi-camera player
+tracker and a ball tracker would report: each player's team, number, court position and velocity, plus the ball's
+3D position. It never reads the simulator's ball state, holder, player actions or event log.
+
+From that it detects passes, shots, makes and misses, rebounds, inbounds, steals and drives. Each shot gets its
+spot, 2 or 3, the nearest defender's distance at the release (the NBA's 0-2 / 2-4 / 4-6 / 6+ ft bands), and
+whether it was catch-and-shoot or pull-up (from dribbles seen in the ball's height). It also flags transition
+and assists. Each event becomes a line spoken by one voice:
+
+- A shot gets a short call at the release ("Mesa 42 pulls up for three..."). The result line describes it:
+  "Bang! Pull-up three from the top of the key, right over Harbor 3. Harbor 8, Mesa 5."
+- Results and steals come first, then shot calls and rebounds. Drives, passes and inbounds are said only when
+  the voice is free, and a shot cuts them off. A line that waits too long is dropped. A miss and its rebound are
+  said together.
+- **Speak aloud** uses the browser's speech synthesis. It works at 1× speed, unpaused and not recording;
+  otherwise lines are timed at 3 words per second and shown as captions on the program monitor.
+
+Each line shows its **glass-to-voice** time: from the moment on the court to the first spoken word. That time
+includes the settings under **Latency**: the tracker's identity delay (1 s by default), capture (camera,
+network, detector), and an optional rephrasing step for a language model. It also includes the measured speech
+start (assumed 0.3 s until a line has been spoken aloud). **Tracker noise** adds Gaussian position noise, with
+optional smoothing.
+
+The **Scorecard** compares the detected events with hoopframe's own as the game runs. On seed 2, over 10
+minutes of game with no noise:
+
+| Event | Found | Correct |
+| --- | --- | --- |
+| Shot | 55/55, 0 false | shooter 55/55, 2 or 3 55/55, contested 54/55 |
+| Make or miss | 55/55 | 55/55; final score exact |
+| Pass | 111/111, 1 false | passer and receiver 111/111 |
+| Rebound | 22/23, 1 false | rebounder 19/22 |
+| Inbound | 32/32 | 32/32 |
+| Steal | none in the game | 3 false |
+
+Median glass-to-voice with the default 1 s identity delay was 1.7 s for shot calls, 2.5 s for results (which
+wait for the shot call to finish) and 1.9 s for rebounds. With the identity delay at 0, each is 1 s less. Most
+wrong rebounders and false steals come from players overlapping in the simulation: at the moment of the
+rebound, the wrong player can be closer to the ball.
+
+`window.hoopframe.commentary()` returns the detected events, the lines with their timing, and the scorecard.
+`window.hoopframe.commentarySettings({ posNoise: 0.2, smooth: 9 })` changes the settings for headless runs.
+The same detector in Python, for recorded takes and eventually the real tracker, is `tools/play_events.py` and
+`tools/narrate.py` in [gym-mv3dt](https://github.com/bauer-san/gym-mv3dt) (branch `claude/youthful-volta-5bfn6r` for now).
+
 ## Reproducibility
 
 The game logic runs on a seeded generator. The same seed gives the same game, event for event, at any
@@ -252,7 +300,7 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   rendered (see [Shutter and motion blur](#shutter-and-motion-blur)), but there is no lens distortion,
   rolling shutter or sensor noise, so expect a domain gap against real broadcast footage. The per-frame
   calibration and labels let you add those effects in post-processing.
-- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `snapshot()`, `events()` and `profile()`
+- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `snapshot()`, `events()`, `commentary()` and `profile()`
   are test hooks for fast-forwarding, inspecting and timing the simulation. `snapshot()` returns the current
   ground-truth line. `events()` returns the events since its previous call; the first call starts the log.
   They do not render or record.
