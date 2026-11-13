@@ -117,6 +117,23 @@ button { cursor: pointer; }
 }
 .ov-call.show { opacity: 1; transform: none; }
 .ov-call.miss { background: var(--panel-2); color: var(--fg); }
+.ov-sub {
+  bottom: 52px; left: 50%; transform: translate(-50%, 6px); max-width: min(80%, 760px); text-align: center;
+  font: 600 16px/1.35 var(--font-body); color: #fff; background: rgba(8,11,15,.82);
+  padding: 6px 12px; border-radius: 3px; text-shadow: none; opacity: 0; transition: opacity .2s, transform .2s;
+}
+.ov-sub.show { opacity: 1; transform: translate(-50%, 0); }
+.cm-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 230px; overflow-y: auto; }
+.cm-lines li { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; font-size: 13px; padding: 5px 8px; background: var(--well); border: 1px solid var(--line); border-radius: 3px; }
+.cm-lines li span, .cm-lines li b { font: 500 11px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.cm-lines li b { color: var(--accent); font-weight: 600; }
+.cm-lines li p { margin: 0; }
+.cm-lines li i { color: var(--muted); font-style: normal; }
+.cm-lines li.empty { display: block; color: var(--muted); }
+.cm-table { overflow-x: auto; }
+.cm-table table { width: 100%; border-collapse: collapse; font: 500 11px var(--font-mono); font-variant-numeric: tabular-nums; }
+.cm-table th, .cm-table td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.cm-table th { color: var(--muted); font-weight: 600; }
 .boot { position: relative; z-index: 2; color: var(--muted); font: 500 13px var(--font-mono); padding: 16px; text-align: center; }
 
 .returns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; flex: none; }
@@ -245,6 +262,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
         <div class="ov ov-rec" id="ov-rec" hidden>● REC</div>
         <div class="ov ov-bl"><span id="ov-spec">1280 × 720 · 16:9 · FOV 34°</span><span id="ov-disp">Display –</span></div>
         <div class="ov ov-call" id="ov-call"></div>
+        <div class="ov ov-sub" id="ov-sub" aria-live="polite"></div>
       </div>
       <div class="returns" id="returns">
         <button class="tile" type="button" data-cam="0"><span class="tile-badge">CAM 1</span><span class="tile-view"></span><span class="tile-meta"><b>Broadcast</b><span></span></span></button>
@@ -258,6 +276,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
       <div class="tabs" role="tablist">
         <button type="button" role="tab" data-tab="cams" aria-selected="true">Cameras</button>
         <button type="button" role="tab" data-tab="data" aria-selected="false">Data out</button>
+        <button type="button" role="tab" data-tab="comm" aria-selected="false">Commentary</button>
       </div>
       <div class="tabpane" id="tab-cams">
       <section>
@@ -405,6 +424,59 @@ button:disabled { opacity: .5; cursor: not-allowed; }
           </div>
           <p class="note">The same seed replays the same game. Pressing Shoot now changes the outcome from that point on.</p>
           <span class="hint" id="session-id"></span>
+        </section>
+      </div>
+      <div class="tabpane" id="tab-comm" hidden>
+        <section>
+          <h2>Play-by-play <span class="pill" id="cm-pill" data-state="off">Listening</span></h2>
+          <div class="toggles">
+            <label class="toggle"><input type="checkbox" id="cm-voice"> Speak aloud</label>
+            <label class="toggle"><input type="checkbox" id="cm-captions"> Captions on program</label>
+          </div>
+          <p class="note" id="cm-voice-note"></p>
+          <ol class="cm-lines" id="cm-lines"></ol>
+          <p class="note">The commentator sees only what a court tracker would report: each player's team, number, court position and velocity, plus the ball's position. It never reads the simulator's ball state, holder or events. The number on the right is glass-to-voice: from the moment on the court to the first spoken word.</p>
+        </section>
+        <section>
+          <h2>Latency <em>added before a line can be spoken</em></h2>
+          <div class="field-row">
+            <label class="field">Identity delay
+              <select id="cm-delay"><option value="0">0 s</option><option value="0.5">0.5 s</option><option value="1">1 s</option><option value="2">2 s</option><option value="3">3 s</option></select>
+            </label>
+            <label class="field">Capture
+              <select id="cm-capture"><option value="0">0 s</option><option value="0.1">0.1 s</option><option value="0.25">0.25 s</option><option value="0.5">0.5 s</option></select>
+            </label>
+            <label class="field">Rephrasing
+              <select id="cm-text"><option value="0">None</option><option value="0.5">0.5 s</option><option value="0.8">0.8 s</option><option value="1.5">1.5 s</option></select>
+            </label>
+          </div>
+          <p class="note">Identity delay: the court tracker holds its output back 1 s by default to fix identity swaps. Capture: camera, network and detector. Rephrasing: a language model's time to first words, if one rewrites the lines.</p>
+        </section>
+        <section>
+          <h2>Tracker noise <em>restarts the scorecard</em></h2>
+          <div class="field-row">
+            <label class="field">Players
+              <select id="cm-pnoise"><option value="0">None</option><option value="0.1">0.1 m</option><option value="0.2">0.2 m</option><option value="0.3">0.3 m</option><option value="0.5">0.5 m</option></select>
+            </label>
+            <label class="field">Ball
+              <select id="cm-bnoise"><option value="0">None</option><option value="0.05">0.05 m</option><option value="0.1">0.1 m</option><option value="0.2">0.2 m</option></select>
+            </label>
+            <label class="field">Smoothing
+              <select id="cm-smooth"><option value="1">Off</option><option value="5">5 frames</option><option value="7">7 frames</option><option value="9">9 frames</option></select>
+            </label>
+          </div>
+          <p class="note">Gaussian noise on each position, independently every frame. Smoothing fits a line (a parabola for the ball) through the last frames.</p>
+        </section>
+        <section>
+          <h2>Scorecard <em>against the simulator's own events</em></h2>
+          <div class="cm-table"><table id="cm-score"></table></div>
+          <div class="readout" id="cm-final"></div>
+          <div class="actions"><button class="btn" type="button" id="cm-reset">Restart scorecard</button></div>
+        </section>
+        <section>
+          <h2>Glass to voice <em>spoken lines</em></h2>
+          <div class="cm-table"><table id="cm-lat"></table></div>
+          <p class="note" id="cm-tts"></p>
         </section>
       </div>
     </aside>
@@ -1634,6 +1706,7 @@ function simStep(dt) {
       q.pos.x += (dx / d) * push * qf; q.pos.z += (dz / d) * push * qf;
     }
   }
+  commentaryTick();                                  // tracker-view commentary, at 30 Hz of game time
 }
 
 /* =========================================================
@@ -2128,6 +2201,7 @@ function emit(type, data) {
   const e = { type, seq: ++eventSeq, session: SESSION, frame: REC.active ? REC.frame : Math.floor(GM.simTime * MQ.rate), t: r4(GM.simTime), ...data };
   if (REC.active || REC.stopping) REC.events.push(JSON.stringify(e));
   if (eventLog) eventLog.push(e);
+  cmGround(e);
   mqttPub('events', e, 1);
 }
 function playerState(p) {
@@ -2664,6 +2738,513 @@ renderStats();
 for (const p of bodies) animate(p, 1);
 // test hook: fast-forward the game logic without rendering
 const testState = () => ({ t: r4(GM.simTime), score: stats.pts.slice(), fga: stats.fga, fgm: stats.fgm, phase: GM.phase, off: GM.off, events: eventSeq, ball: v3(BALL.pos) });
+/* =========================================================
+   Commentary: live play-by-play from what a court tracker would see
+   ---------------------------------------------------------
+   Every 1/30 s of game time the detector gets ONLY tracker-style input: each player's identity, team, court position
+   and velocity, plus the ball's 3D position (optionally with Gaussian noise). It never reads BALL.mode/holder, player
+   actions or the event log. From that it finds passes, shots, makes and misses, rebounds, inbounds, steals and drives,
+   turns them into lines, and speaks them through one voice (the browser's speech synthesis, or a timed stand-in).
+   hoopframe's own events are used only for the scorecard. Coordinates here are the tracker's: x along the court,
+   y = -z (to the left facing +x), z up.
+   ========================================================= */
+var CM_READY = false;                                  // simStep runs before this block is evaluated
+const CMC = {
+  CONTROL_DIST: 0.8, CONTROL_REL_V: 2.0, CONTROL_FRAMES: 2, STRIP_FRAMES: 4, LOOSE_DIST: 0.6, LOOSE_FRAMES: 2,
+  AMBIG_MARGIN: 0.3, AMBIG_DIST: 0.9, AMBIG_MAX_S: 1.0, RELEASE_DIST: 0.95, HELD_DIST: 0.65, RELEASE_FRAMES: 2,
+  SHOT_MIN_Z: 2.0, SHOT_APEX_ABOVE_RIM: 0.15, DRIBBLE_Z: 0.4, MISS_Z: 2.5, DRIVE_FROM: 5.5, DRIVE_TO: 3.0,
+  DRIVE_SPEED: 2.5, TRANSITION_S: 7.0, ASSIST_S: 4.0, ASSIST_DRIBBLES: 2, FPS: 30,
+};
+const CM_FT = 0.3048;
+const CM_CONTEST = [[2 * CM_FT, 'very tightly contested'], [4 * CM_FT, 'contested'], [6 * CM_FT, 'open'], [Infinity, 'wide open']];
+const CM_PRIORITY = { shot_result: 0, steal: 0, shot: 1, rebound: 1, drive: 2, inbound: 3, pass: 3 };
+const CM_MAX_WAIT = [4.0, 2.0, 0.6, 0.4];             // s a line may wait for the voice, by priority
+const CM_WPS = 3.0;                                    // words per second when the voice is simulated
+const CM_TEAM_NAME = Object.fromEntries(TEAMS.map((t) => [t.short, t.name[0] + t.name.slice(1).toLowerCase()]));
+const cmHd = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const cmWho = (p) => (p ? { identity: p.identity, team: p.team } : null);
+const r4c = (v) => Math.round(v * 1e4) / 1e4;
+
+function cmLinFit(ts, vals) {                          // value and slope at the last time
+  const k = ts.length, tm = ts.reduce((a, b) => a + b, 0) / k;
+  let den = 0; for (const t of ts) den += (t - tm) ** 2; den = den || 1e-9;
+  const m = vals.reduce((a, b) => a + b, 0) / k;
+  let slope = 0; for (let i = 0; i < k; i++) slope += ((ts[i] - tm) / den) * vals[i];
+  return [m + slope * (ts[k - 1] - tm), slope];
+}
+function cmQuadFit(tt, vals) {                         // least-squares a + b t + c t², t = 0 at the last frame: [a, b]
+  const S = [0, 0, 0, 0, 0], V = [0, 0, 0];
+  for (let i = 0; i < tt.length; i++) {
+    let p = 1; for (let j = 0; j < 5; j++) { S[j] += p; if (j < 3) V[j] += p * vals[i]; p *= tt[i]; }
+  }
+  const M = [[S[0], S[1], S[2], V[0]], [S[1], S[2], S[3], V[1]], [S[2], S[3], S[4], V[2]]];
+  for (let c = 0; c < 3; c++) {
+    let piv = c; for (let r = c + 1; r < 3; r++) if (Math.abs(M[r][c]) > Math.abs(M[piv][c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    if (Math.abs(M[c][c]) < 1e-12) return cmLinFit(tt, vals);
+    for (let r = 0; r < 3; r++) if (r !== c) { const f = M[r][c] / M[c][c]; for (let k = c; k < 4; k++) M[r][k] -= f * M[c][k]; }
+  }
+  return [M[0][3] / M[0][0], M[1][3] / M[1][1]];
+}
+
+class CmDetector {
+  constructor(smooth) {
+    this.smooth = smooth;
+    this.court = { rim_x: Math.abs(RIMS[0].x), half_l: HALF_L, arc_r: ARC_R, corner_y: CORNER_Z, lane_hw: LANE_HW };
+    this.attack = Object.fromEntries(TEAMS.map((t, i) => [t.short, ATTACK[i]]));
+    this.raw = []; this.hist = [];
+    this.holder = null; this.holderTeam = null; this.cand = null; this.candN = 0; this.awayN = 0;
+    this.pending = null; this.released = null; this.shot = null; this.lastShot = null;
+    this.possession = null; this.possGained = [null, -1e9, false]; this.catch = null; this.driveFrom = null;
+    this.score = Object.fromEntries(TEAMS.map((t) => [t.short, 0]));
+  }
+  rim(team) { return [this.attack[team] * this.court.rim_x, 0]; }
+  zone(x, y, team) {
+    const d = this.attack[team], c = this.court, rx = c.rim_x;
+    const along = rx - d * x, r = Math.hypot(along, y), side = d * y > 0 ? 'left' : 'right';
+    const dx0 = Math.sqrt(Math.max(c.arc_r ** 2 - c.corner_y ** 2, 0));
+    const three = (Math.abs(y) > c.corner_y && along < dx0) || r > c.arc_r;
+    const ang = Math.atan2(Math.abs(y), Math.max(along, 0.01)) * 180 / Math.PI;
+    const ftAlong = 19 * CM_FT - (c.half_l - rx);
+    let spot;
+    if (r <= 1.25) spot = 'at the rim';
+    else if (Math.abs(y) <= c.lane_hw && along <= ftAlong) spot = 'in the paint';
+    else if (three) spot = along < dx0 + 0.6 && Math.abs(y) > c.corner_y - 0.6 ? `${side} corner` : ang < 25 ? 'top of the key' : `${side} wing`;
+    else spot = ang < 25 ? 'free-throw line' : ang > 65 ? `${side} baseline` : r < 5.5 ? `${side} elbow` : `${side} wing`;
+    return { distance_m: Math.round(r * 100) / 100, three, spot };
+  }
+  player(f, id) { return f.players.find((q) => q.identity === id) || null; }
+  ev(type, t, frame, data) { const now = this.hist[this.hist.length - 1]; return { type, t: r4c(t), frame, t_confirmed: now.t, frame_confirmed: now.frame, ...data }; }
+  smoothFrame(f) {
+    this.raw.push(f); if (this.raw.length > this.smooth) this.raw.shift();
+    const k = this.raw.length; if (k < 2) return f;
+    const ts = this.raw.map((g) => g.t), out = { ...f, players: [] };
+    for (const p of f.players) {
+      const seq = this.raw.map((g) => this.player(g, p.identity));
+      if (seq.some((q) => !q)) { out.players.push(p); continue; }
+      out.players.push({ ...p, x: cmLinFit(ts, seq.map((q) => q.x))[0], y: cmLinFit(ts, seq.map((q) => q.y))[0] });
+    }
+    if (f.ball && this.raw.every((g) => g.ball)) {
+      const b = {}, v = [];
+      const tt = ts.map((t) => t - ts[k - 1]);
+      for (const a of ['x', 'y', 'z']) {
+        const [val, sl] = k >= 4 ? cmQuadFit(tt, this.raw.map((g) => g.ball[a])) : cmLinFit(ts, this.raw.map((g) => g.ball[a]));
+        b[a] = val; v.push(sl);
+      }
+      out.ball = { ...b, v };
+    }
+    return out;
+  }
+  ballV() {
+    const h = this.hist, n = h.length;
+    if (n && h[n - 1].ball && h[n - 1].ball.v) return h[n - 1].ball.v;
+    if (n < 2 || !h[n - 1].ball || !h[n - 2].ball) return null;
+    const a = h[n - 2].ball, b = h[n - 1].ball, dt = h[n - 1].t - h[n - 2].t || 1 / CMC.FPS;
+    return [(b.x - a.x) / dt, (b.y - a.y) / dt, (b.z - a.z) / dt];
+  }
+  step(f0) {
+    const f = this.smooth > 1 ? this.smoothFrame(f0) : f0;
+    this.hist.push(f); if (this.hist.length > 300) this.hist.shift();
+    const out = [], ball = f.ball, bv = this.ballV();
+    if (!ball) return out;
+    let best = null, bestD = Infinity;
+    for (const p of f.players) { const d = cmHd(ball, p); if (d < bestD) { best = p; bestD = d; } }
+    let ctrl = null;
+    const lim = this.holder ? CMC.CONTROL_DIST : CMC.LOOSE_DIST;
+    if (best && bestD < lim && ball.z < 3.4) {
+      const rel = bv ? Math.hypot(bv[0] - (best.vx || 0), bv[1] - (best.vy || 0)) : 0;
+      if (rel < CMC.CONTROL_REL_V) ctrl = best;
+    }
+    if (this.shot && !this.shot.done) out.push(...this.followShot(f, ball));
+    if (this.holder) {
+      const h = this.player(f, this.holder);
+      if (ctrl && ctrl.identity !== this.holder && (!h || cmHd(ball, h) > CMC.RELEASE_DIST)) {
+        this.candN = this.cand === ctrl.identity ? this.candN + 1 : 1; this.cand = ctrl.identity;
+        if (this.candN >= CMC.STRIP_FRAMES) { out.push(...this.release(h, 'loose')); out.push(...this.gain(ctrl)); }
+        return out;
+      }
+      if (!h || cmHd(ball, h) > CMC.RELEASE_DIST) {
+        if (++this.awayN >= CMC.RELEASE_FRAMES) out.push(...this.release(h || { identity: this.holder, team: this.holderTeam }, null));
+      } else { this.awayN = 0; this.whileHeld(f, h, ball, out); }
+      return out;
+    }
+    if (this.pending) {                                // a contested loose ball: wait until one player clearly has it
+      const pl = [...f.players].sort((a, b) => cmHd(ball, a) - cmHd(ball, b));
+      const d0 = cmHd(ball, pl[0]), d1 = pl.length > 1 ? cmHd(ball, pl[1]) : Infinity;
+      if (d0 > CMC.AMBIG_DIST) this.pending = null;
+      else if ((d0 <= CMC.HELD_DIST && d1 - d0 > CMC.AMBIG_MARGIN) || f.t - this.pending[0] >= CMC.AMBIG_MAX_S) {
+        const [t0, fr0] = this.pending; this.pending = null; out.push(...this.gain(pl[0], t0, fr0));
+      }
+      return out;
+    }
+    if (ctrl) {
+      this.candN = this.cand === ctrl.identity ? this.candN + 1 : 1; this.cand = ctrl.identity;
+      if (this.candN >= CMC.LOOSE_FRAMES) {
+        const n = this.hist.length, t0 = n >= CMC.LOOSE_FRAMES ? this.hist[n - CMC.LOOSE_FRAMES].t : f.t;
+        const fr0 = f.frame - CMC.LOOSE_FRAMES + 1;
+        let rival = Infinity; for (const q of f.players) if (q !== ctrl) rival = Math.min(rival, cmHd(ball, q));
+        if (rival - bestD <= CMC.AMBIG_MARGIN) { this.pending = [t0, fr0]; this.cand = null; this.candN = 0; }
+        else out.push(...this.gain(ctrl, t0, fr0));
+      }
+    } else { this.cand = null; this.candN = 0; }
+    return out;
+  }
+  whileHeld(f, h, ball, out) {
+    const c = this.catch;
+    if (c) { if (ball.z < CMC.DRIBBLE_Z && !c.low) c.dribbles++; c.low = ball.z < CMC.DRIBBLE_Z; }
+    const [rx, ry] = this.rim(h.team), r = Math.hypot(h.x - rx, h.y - ry);
+    const toward = -((h.x - rx) * (h.vx || 0) + (h.y - ry) * (h.vy || 0)) / Math.max(r, 0.01);
+    if (toward < CMC.DRIVE_SPEED) this.driveFrom = null;
+    else if (!this.driveFrom) this.driveFrom = [r, f.t, f.frame];
+    else if (this.driveFrom[0] > CMC.DRIVE_FROM && r < CMC.DRIVE_TO) {
+      out.push(this.ev('drive', this.driveFrom[1], this.driveFrom[2], { player: cmWho(h), ...this.zone(h.x, h.y, h.team) }));
+      this.driveFrom = [0, 0, 0];
+    }
+  }
+  gain(p, tGain, frGain) {
+    const f = this.hist[this.hist.length - 1], out = [], rel = this.released, shot = this.lastShot;
+    this.holder = p.identity; this.holderTeam = p.team; this.cand = null; this.candN = 0; this.awayN = 0;
+    if (tGain === undefined) {
+      const n = this.hist.length;
+      tGain = n >= CMC.CONTROL_FRAMES ? this.hist[n - CMC.CONTROL_FRAMES].t : f.t; frGain = f.frame - CMC.CONTROL_FRAMES + 1;
+    }
+    let how = 'recover', passer = null;
+    if (this.shot && !this.shot.done) out.push(...this.shotResult(false, f.t, f.frame));
+    if (shot && rel && rel.kind === 'shot' && rel.t >= shot.t - 1e-6) {
+      if (shot.details.made) how = p.team !== shot.team ? 'inbound' : 'recover';
+      else { how = 'rebound'; out.push(this.ev('rebound', tGain, frGain, { player: cmWho(p), offensive: p.team === shot.team })); }
+    } else if (rel && rel.kind === 'pass') {
+      if (rel.from.team === p.team) {
+        how = 'pass'; passer = rel.from.identity;
+        out.push(this.ev('pass', rel.t, rel.frame, { passer: rel.from, receiver: cmWho(p), flight_s: r4c(tGain - rel.t) }));
+      } else { how = 'steal'; out.push(this.ev('steal', tGain, frGain, { player: cmWho(p), from_player: rel.from })); }
+    } else if (rel && rel.kind === 'loose' && rel.from.team !== p.team) {
+      how = 'steal'; out.push(this.ev('steal', tGain, frGain, { player: cmWho(p), from_player: rel.from }));
+    }
+    if (how === 'inbound') out.push(this.ev('inbound', tGain, frGain, { player: cmWho(p) }));
+    this.released = null;
+    this.catch = { t: tGain, from: passer, dribbles: 0, low: false };
+    this.driveFrom = null;
+    if (p.team !== this.possession) {
+      const [rx, ry] = this.rim(p.team);
+      this.possession = p.team;
+      this.possGained = [p.team, tGain, Math.hypot(p.x - rx, p.y - ry) > this.court.rim_x];
+      out.push(this.ev('possession', tGain, frGain, { team: p.team, player: cmWho(p), how }));
+    }
+    return out;
+  }
+  release(h, kind) {
+    const hl = this.hist;
+    let i = 0;
+    for (let j = hl.length - 2; j >= 0; j--) {
+      const q = this.player(hl[j], h.identity);
+      if (q && hl[j].ball && cmHd(hl[j].ball, q) <= CMC.HELD_DIST) { i = j; break; }
+    }
+    const rf = hl[i], out = [];
+    this.holder = null; this.awayN = 0;
+    if (!kind) {                                       // a shot: released above SHOT_MIN_Z, arc peaking above the rim, toward the basket
+      const g1 = hl[Math.min(i + 3, hl.length - 1)], b = rf.ball, b1 = g1.ball;
+      const dt = g1.t - rf.t || 1 / CMC.FPS, vz = (b1.z - b.z) / dt;
+      const apex = b1.z + Math.max(vz, 0) ** 2 / (2 * 9.81);
+      const [rx, ry] = this.rim(h.team);
+      const heading = (b1.x - b.x) * (rx - b.x) + (b1.y - b.y) * (ry - b.y);
+      kind = b.z >= CMC.SHOT_MIN_Z && vz > 0 && apex >= RIM_H + CMC.SHOT_APEX_ABOVE_RIM && heading >= 0 ? 'shot' : 'pass';
+    }
+    this.released = { from: cmWho(h), frame: rf.frame, t: rf.t, kind };
+    if (kind === 'shot') out.push(this.newShot(h, rf));
+    return out;
+  }
+  newShot(h, rf) {
+    const p = this.player(rf, h.identity) || h, team = p.team, z = this.zone(p.x, p.y, team), [rx, ry] = this.rim(team);
+    let nd = null, dd = Infinity;
+    for (const q of rf.players) if (q.team !== team) { const d = cmHd(p, q); if (d < dd) { dd = d; nd = q; } }
+    const contest = CM_CONTEST.find(([lim]) => dd < lim)[1];
+    const away = ((p.x - rx) * (p.vx || 0) + (p.y - ry) * (p.vy || 0)) / Math.max(z.distance_m, 0.01);
+    const c = this.catch || { t: rf.t, from: null, dribbles: 0 }, held = rf.t - c.t;
+    const kind = z.distance_m < 2.0 ? 'layup' : z.spot === 'in the paint' ? 'floater' : z.three ? 'three' : 'jumper';
+    const jump = kind === 'three' || kind === 'jumper';
+    const creation = c.dribbles === 0 && held < 2.0 && jump ? 'catch-and-shoot' : c.dribbles > 0 && jump ? 'pull-up' : '';
+    const [tg, tt, back] = this.possGained;
+    const details = {
+      ...z, kind, creation, fading: away > 0.8, transition: tg === team && back && rf.t - tt <= CMC.TRANSITION_S,
+      dribbles: c.dribbles, held_s: Math.round(held * 100) / 100, defender: cmWho(nd), defender_m: Math.round(dd * 100) / 100, contest,
+      passer: c.from && held <= CMC.ASSIST_S && c.dribbles <= CMC.ASSIST_DRIBBLES ? c.from : null,
+    };
+    this.shot = { shooter: cmWho(p), team, t: rf.t, frame: rf.frame, rim: [rx, ry], details, peak: 0, done: false };
+    this.lastShot = this.shot;
+    return this.ev('shot', rf.t, rf.frame, { shooter: cmWho(p), ...details });
+  }
+  followShot(f, ball) {
+    const s = this.shot, n = this.hist.length, prev = n >= 2 ? this.hist[n - 2].ball : null;
+    s.peak = Math.max(s.peak, ball.z);
+    if (prev && prev.z >= RIM_H && RIM_H > ball.z) {   // crossed the rim plane going down
+      const a = (prev.z - RIM_H) / (prev.z - ball.z);
+      const x = prev.x + a * (ball.x - prev.x), y = prev.y + a * (ball.y - prev.y);
+      if (Math.hypot(x - s.rim[0], y - s.rim[1]) < RIM_R) {
+        const t0 = this.hist[n - 2].t;
+        return this.shotResult(true, t0 + a * (f.t - t0), f.frame);
+      }
+    }
+    if (ball.z < CMC.MISS_Z && s.peak > ball.z + 0.3 && prev && ball.z < prev.z) return this.shotResult(false, f.t, f.frame);
+    return [];
+  }
+  shotResult(made, t, frame) {
+    const s = this.shot; s.done = true; s.details.made = made;
+    const pts = made ? (s.details.three ? 3 : 2) : 0;
+    this.score[s.team] += pts;
+    return [this.ev('shot_result', t, frame, { shooter: s.shooter, made, points: pts, three: s.details.three,
+      assist: made ? s.details.passer : null, score: { ...this.score }, shot_t: r4c(s.t) })];
+  }
+}
+
+class CmNarrator {
+  constructor(seed) { this.rng = mulberry32(seed); this.shots = new Map(); }
+  pick(...o) { return o[Math.floor(this.rng() * o.length)]; }
+  who(p) {
+    if (!p) return 'someone';
+    const id = typeof p === 'string' ? p : p.identity, [team, num] = id.split('-');
+    return num ? `${CM_TEAM_NAME[team] || team} ${num}` : id;
+  }
+  describe(e) {
+    let s;
+    if (e.kind === 'layup') s = 'layup';
+    else if (e.kind === 'floater') s = 'floater in the lane';
+    else {
+      const c = { 'catch-and-shoot': 'catch-and-shoot ', 'pull-up': 'pull-up ' }[e.creation] || '';
+      s = `${c}${e.kind === 'three' ? 'three' : 'jumper'} from the ${e.spot}`;
+      if (e.fading) s = 'fading ' + s;
+    }
+    if (e.transition) s += ' in transition';
+    s += { 'very tightly contested': `, right over ${this.who(e.defender)}`, contested: `, ${this.who(e.defender)} contesting`, open: '', 'wide open': ', wide open' }[e.contest];
+    return s;
+  }
+  line(e) {
+    const t = e.type;
+    if (t === 'shot') {
+      this.shots.set(e.t, e);
+      const who = this.who(e.shooter);
+      let s;
+      if (e.kind === 'layup' || e.kind === 'floater') s = this.pick(`${who} to the rim`, `${who} goes up`);
+      else if (e.creation === 'pull-up') s = `${who} pulls up` + (e.kind === 'three' ? ' for three' : '');
+      else s = e.kind === 'three' ? `${who} for three` : `${who} shoots`;
+      if (e.contest === 'wide open') s += ', wide open';
+      return s + '...';
+    }
+    if (t === 'shot_result') {
+      const shot = this.shots.get(e.shot_t), desc = shot ? this.describe(shot) : '';
+      if (!e.made) return this.pick('No good.', 'Off the rim.', 'Misses.');
+      let s = e.three ? this.pick('Bang!', 'Splash!', 'Got it!') : this.pick('Good!', 'Scores!', 'Got it!');
+      if (desc) s += ` ${desc[0].toUpperCase()}${desc.slice(1)}.`;
+      if (e.assist) s += ` ${this.pick('Feed from', 'Assist,', 'Set up by')} ${this.who(e.assist)}.`;
+      const [a, b] = Object.entries(e.score).sort((x, y) => y[1] - x[1]);
+      s += a[1] !== b[1] ? ` ${CM_TEAM_NAME[a[0]]} ${a[1]}, ${CM_TEAM_NAME[b[0]]} ${b[1]}.` : ` All square at ${a[1]}.`;
+      return s;
+    }
+    if (t === 'rebound') {
+      const w = this.who(e.player);
+      return e.offensive ? this.pick(`Offensive board, ${w}!`, `${w} grabs the offensive rebound!`) : this.pick(`Rebound ${w}.`, `${w} cleans it up.`);
+    }
+    if (t === 'steal') return `Picked off! ${this.who(e.player)} with the steal.`;
+    if (t === 'drive') return this.pick(`${this.who(e.player)} attacks the basket`, `${this.who(e.player)} drives`);
+    if (t === 'inbound') return `${CM_TEAM_NAME[e.player.team]} inbound.`;
+    if (t === 'pass') return this.pick(`${this.who(e.passer)} to ${this.who(e.receiver)}.`, `Swing to ${this.who(e.receiver)}.`);
+    return null;
+  }
+}
+
+const CM_SETTINGS_KEY = 'hoopframe-commentary';
+const CM = {
+  k: -1, det: null, nar: null, events: [], lines: [], queue: [], current: null, gt: [], noiseRng: null,
+  opts: { voice: false, captions: true, identityDelay: 1.0, captureS: 0.25, textS: 0, ttsS: 0.3, posNoise: 0, ballNoise: 0, smooth: 5 },
+  ttsMs: [], shotLines: new Map(),
+};
+try { Object.assign(CM.opts, JSON.parse(localStorage.getItem(CM_SETTINGS_KEY) || '{}'), { voice: false }); } catch { /* storage unavailable */ }
+function cmReset() {
+  CM.det = new CmDetector(CM.opts.smooth);
+  CM.nar = new CmNarrator(SEED ^ 0x0c0ffee);
+  CM.noiseRng = mulberry32(SEED ^ 0x5eed);
+  CM.events = []; CM.lines = []; CM.queue = []; CM.shotLines = new Map(); CM.k = -1;
+  if (CM.current && CM.current.real && window.speechSynthesis) speechSynthesis.cancel();
+  CM.current = null;
+  CM.gt = CM.gt.filter((e) => e.t >= GM.simTime);   // the scorecard starts again from now
+  CM.since = GM.simTime;
+  CM.ptsAt = typeof stats !== 'undefined' ? [...stats.pts] : [0, 0];
+}
+function cmGauss() { const u = 1 - CM.noiseRng(), v = CM.noiseRng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+function cmTrackerFrame(k) {                          // what a court tracker plus a ball tracker would report
+  const pn = CM.opts.posNoise, bn = CM.opts.ballNoise, n = (s) => (s ? s * cmGauss() : 0);
+  return {
+    frame: k, t: k / CMC.FPS,
+    players: players.map((p) => ({
+      identity: p.id, team: TEAMS[p.team].short, x: p.pos.x + n(pn), y: -p.pos.z + n(pn),
+      vx: p.move.x * p.speed, vy: -p.move.y * p.speed,
+    })),
+    ball: { x: BALL.pos.x + n(bn), y: -BALL.pos.z + n(bn), z: BALL.pos.y + n(bn) },
+  };
+}
+function cmGround(e) {                                 // hoopframe's own events, for the scorecard only
+  if (!CM_READY) return;
+  if (['shot', 'shot_result', 'pass', 'rebound', 'inbound'].includes(e.type) || (e.type === 'possession' && e.how === 'recover')) CM.gt.push(e);
+}
+function commentaryTick() {
+  if (!CM_READY) return;
+  const k = Math.floor(GM.simTime * CMC.FPS + 1e-6);
+  if (k === CM.k) return;
+  CM.k = k;
+  for (const e of CM.det.step(cmTrackerFrame(k))) {
+    CM.events.push(e);
+    const text = CM.nar.line(e);
+    if (!text) continue;
+    const o = CM.opts;
+    const x = { type: e.type, priority: CM_PRIORITY[e.type], t: e.t, made: e.made, text, dropped: true,
+      ready: e.t_confirmed + o.captureS + o.identityDelay + o.textS };
+    if (e.type === 'shot') CM.shotLines.set(e.t, x);
+    if (e.type === 'shot_result') { x.shotLine = CM.shotLines.get(e.shot_t) || null; x.shooter = CM.nar.who(e.shooter); }
+    CM.lines.push(x); CM.queue.push(x);
+  }
+  cmVoice(k / CMC.FPS);
+  if (k % 15 === 0) cmRender();
+}
+function cmLiveVoice() { return CM.opts.voice && !!window.speechSynthesis && speed === 1 && !REC.active && !paused; }
+function cmVoice(now) {
+  const q = CM.queue;
+  let cur = CM.current;
+  if (cur && !cur.real && now >= cur.end) cur = CM.current = null;
+  if (cur && cur.real && cur.voice === undefined && now - cur.askedAt > 5) {   // speech never started: give up on it
+    speechSynthesis.cancel(); cur.dropped = true; cur = CM.current = null;
+  }
+  if (cur && cur.priority >= 2 && q.some((x) => x.priority <= 1 && x.ready <= now)) {   // cut off by an urgent line
+    cur.cut_off = true;
+    if (cur.real) speechSynthesis.cancel();
+    cur = CM.current = null;
+  }
+  if (cur) return;
+  for (let i = q.length - 1; i >= 0; i--) if (q[i].ready <= now && now - q[i].ready > CM_MAX_WAIT[q[i].priority]) q.splice(i, 1);
+  const ready = q.filter((x) => x.ready <= now);
+  if (!ready.length) return;
+  const x = ready.reduce((a, b) => (b.priority < a.priority || (b.priority === a.priority && b.ready < a.ready) ? b : a));
+  q.splice(q.indexOf(x), 1);
+  let text = x.text;
+  if (x.type === 'shot_result' && x.made === false) {
+    const reb = q.find((y) => y.type === 'rebound' && y.ready <= now);
+    if (reb) { q.splice(q.indexOf(reb), 1); text += ' ' + reb.text; reb.merged = x; reb.dropped = false; }
+  }
+  if (x.type === 'shot_result' && x.shotLine && x.shotLine.dropped) text = `${x.shooter} — ${text}`;
+  x.dropped = false; x.spoken = text;
+  const setVoice = (tv) => {
+    x.voice = tv; x.glass_to_voice = tv - x.t;
+    for (const y of CM.lines) if (y.merged === x) { y.voice = tv; y.glass_to_voice = tv - y.t; }
+    cmCaption(text);
+  };
+  if (cmLiveVoice()) {
+    x.real = true; x.askedAt = now;
+    const u = new SpeechSynthesisUtterance(text), asked = performance.now();
+    u.rate = 1.1;
+    u.onstart = () => { CM.ttsMs.push(performance.now() - asked); setVoice(GM.simTime); };
+    u.onend = u.onerror = () => { if (CM.current === x) CM.current = null; };
+    CM.current = x;
+    speechSynthesis.speak(u);
+  } else {
+    setVoice(now + CM.opts.ttsS);
+    x.end = x.voice + text.split(/\s+/).length / CM_WPS;
+    CM.current = x;
+  }
+}
+let cmCapTimer = 0;
+function cmCaption(text) {
+  const el = $('ov-sub');
+  el.textContent = text;
+  el.classList.toggle('show', CM.opts.captions);
+  clearTimeout(cmCapTimer);
+  cmCapTimer = setTimeout(() => el.classList.remove('show'), 1000 * Math.max(2, text.split(/\s+/).length / CM_WPS + 0.8));
+}
+
+/* scorecard: the same greedy time matching as gym-mv3dt's tools/narrate.py, on events at least 3 s old */
+function cmMatch(gt, det, tol = 0.6) {
+  const used = new Set(), pairs = [];
+  for (const g of gt) {
+    let bj = -1, bd = Infinity;
+    det.forEach((d, j) => { const dd = Math.abs(d.t - g.t); if (!used.has(j) && dd <= tol && dd < bd) { bd = dd; bj = j; } });
+    if (bj >= 0) { used.add(bj); pairs.push([g, det[bj]]); } else pairs.push([g, null]);
+  }
+  return [pairs, det.filter((_, j) => !used.has(j))];
+}
+function cmScorecard() {
+  const until = GM.simTime - 3, from = CM.since || 0;
+  const gt = CM.gt.filter((e) => e.t >= from && e.t <= until), det = CM.events.filter((e) => e.t <= until);
+  const by = (l, ty) => l.filter((e) => e.type === ty);
+  const rows = [];
+  const tally = (name, pairs, extra, checks) => {
+    const found = pairs.filter(([, d]) => d);
+    rows.push({ name, gt: pairs.length, found: found.length, false: extra.length,
+      checks: checks.map(([c, fn]) => `${c} ${found.filter(([g, d]) => fn(g, d)).length}/${found.length}`).join(' · '),
+      lat: found.map(([g, d]) => d.t_confirmed - g.t) });
+  };
+  const [shots, xs] = cmMatch(by(gt, 'shot'), by(det, 'shot'));
+  tally('Shot', shots, xs, [['shooter', (g, d) => d.shooter.identity === g.shooter], ['2/3', (g, d) => d.three === g.three],
+    ['contest', (g, d) => (d.defender_m < 1.3) === g.contested]]);
+  const res = new Map(by(gt, 'shot_result').map((e) => [e.shot_id, e])), dres = by(det, 'shot_result'), rp = [];
+  for (const [g, d] of shots) { const gr = res.get(g.shot_id); if (gr) rp.push([gr, d ? dres.find((r) => Math.abs(r.shot_t - d.t) < 1e-3) || null : null]); }
+  tally('Make/miss', rp, dres.filter((r) => !rp.some(([, d]) => d === r)), [['right', (g, d) => d.made === g.made]]);
+  const [ps, xp] = cmMatch(by(gt, 'pass'), by(det, 'pass'));
+  tally('Pass', ps, xp, [['passer→receiver', (g, d) => d.passer.identity === g.from && d.receiver.identity === g.to]]);
+  const [rb, xr] = cmMatch(by(gt, 'rebound'), by(det, 'rebound'));
+  tally('Rebound', rb, xr, [['player', (g, d) => d.player.identity === g.player]]);
+  const [ib, xi] = cmMatch(by(gt, 'inbound'), by(det, 'inbound'));
+  tally('Inbound', ib, xi, [['player', (g, d) => d.player.identity === g.player]]);
+  const [st, xst] = cmMatch(gt.filter((e) => e.type === 'possession'), by(det, 'steal'));
+  tally('Steal', st, xst, []);
+  return rows;
+}
+const cmMed = (v, q = 0.5) => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.round(q * (s.length - 1)))]; };
+function cmRender() {
+  if ($('tab-comm').hidden) return;
+  const live = cmLiveVoice();
+  $('cm-pill').dataset.state = CM.current ? 'on' : 'off';
+  $('cm-pill').textContent = CM.current ? (CM.current.real ? 'Speaking' : 'Speaking (timed)') : 'Listening';
+  $('cm-voice-note').textContent = !window.speechSynthesis ? 'Speech synthesis is not available here: lines are timed at 3 words per second instead.'
+    : CM.opts.voice && !live ? 'Speaking aloud only at 1× speed, unpaused and not recording; lines are timed meanwhile.' : '';
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const spoken = CM.lines.filter((x) => !x.dropped && !x.merged && x.voice !== undefined).slice(-8).reverse();
+  $('cm-lines').innerHTML = spoken.length ? spoken.map((x) => `<li><span>${timecode(x.voice).slice(3, 8)}</span><p>${esc(x.spoken)}${x.cut_off ? ' <i>(cut off)</i>' : ''}</p><b>${x.glass_to_voice.toFixed(1)} s</b></li>`).join('')
+    : '<li class="empty">Waiting for the first play…</li>';
+  const pct = (n, d) => (d ? `${n}/${d}` : '–');
+  $('cm-score').innerHTML = '<tr><th>Event</th><th>Truth</th><th>Found</th><th>False</th><th>Correct</th></tr>' + cmScorecard().map((r) =>
+    `<tr><td>${r.name}</td><td>${r.gt}</td><td>${pct(r.found, r.gt)}</td><td>${r.false}</td><td>${r.checks || '–'}</td></tr>`).join('');
+  $('cm-final').textContent = `Detected score ${Object.entries(CM.det.score).map(([t, v]) => `${CM_TEAM_NAME[t]} ${v}`).join(', ')} · actual ${TEAMS.map((t, i) => `${CM_TEAM_NAME[t.short]} ${stats.pts[i] - CM.ptsAt[i]}`).join(', ')}${CM.since ? ` (since ${timecode(CM.since).slice(3, 8)})` : ''}`;
+  const types = [['shot', 'Shot call'], ['shot_result', 'Result'], ['rebound', 'Rebound'], ['steal', 'Steal'], ['drive', 'Drive'], ['pass', 'Pass'], ['inbound', 'Inbound']];
+  $('cm-lat').innerHTML = '<tr><th>Line</th><th>Said</th><th>Dropped</th><th>Median</th><th>90 %</th></tr>' + types.map(([ty, name]) => {
+    const xs = CM.lines.filter((x) => x.type === ty && x.ready < GM.simTime - 4);
+    if (!xs.length) return '';
+    const g = xs.filter((x) => x.glass_to_voice !== undefined).map((x) => x.glass_to_voice), f = (v) => (v === null ? '–' : `${v.toFixed(2)} s`);
+    return `<tr><td>${name}</td><td>${g.length}</td><td>${xs.length - g.length}</td><td>${f(cmMed(g))}</td><td>${f(cmMed(g, 0.9))}</td></tr>`;
+  }).join('');
+  const tm = cmMed(CM.ttsMs);
+  $('cm-tts').textContent = tm === null ? `Speech start assumed ${CM.opts.ttsS.toFixed(2)} s (no spoken line measured yet).`
+    : `Speech start measured: median ${(tm / 1000).toFixed(2)} s over ${CM.ttsMs.length} lines.`;
+}
+function cmSave() { try { localStorage.setItem(CM_SETTINGS_KEY, JSON.stringify(CM.opts)); } catch { /* storage unavailable */ } }
+function cmBind() {
+  const o = CM.opts;
+  const sel = (id, key, after) => { const e = $(id); e.value = String(o[key]); e.addEventListener('change', () => { o[key] = +e.value; cmSave(); if (after) after(); cmRender(); }); };
+  sel('cm-delay', 'identityDelay'); sel('cm-capture', 'captureS'); sel('cm-text', 'textS');
+  sel('cm-pnoise', 'posNoise', cmReset); sel('cm-bnoise', 'ballNoise', cmReset); sel('cm-smooth', 'smooth', cmReset);
+  $('cm-voice').checked = o.voice;
+  $('cm-voice').addEventListener('change', (ev) => {
+    o.voice = ev.target.checked;
+    if (o.voice && window.speechSynthesis) speechSynthesis.speak(new SpeechSynthesisUtterance(''));   // unlock audio on this click
+    if (!o.voice && window.speechSynthesis) speechSynthesis.cancel();
+    cmRender();
+  });
+  $('cm-captions').checked = o.captions;
+  $('cm-captions').addEventListener('change', (ev) => { o.captions = ev.target.checked; cmSave(); if (!o.captions) $('ov-sub').classList.remove('show'); });
+  $('cm-reset').addEventListener('click', () => { cmReset(); cmRender(); });
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', cmRender));
+}
+cmReset();
+cmBind();
+CM_READY = true;
+
 window.hoopframe = {
   advance(seconds) { for (let i = 0; i < seconds / STEP; i++) simStep(STEP); return testState(); },
   advanceTo(t, withAnimation = false) {
@@ -2677,6 +3258,11 @@ window.hoopframe = {
   referees() { return refs.map(refState); },
   snapshot(withAnnotations = true) { return snapshot(Math.floor(GM.simTime * MQ.rate), withAnnotations); },   // a groundtruth.jsonl line for now
   events() { const out = eventLog || []; eventLog = []; return out; },   // events since the last call (first call starts logging)
+  commentary() {                                       // the Commentary tab's detected events, lines and scorecard
+    const strip = ({ shotLine, merged, ...x }) => ({ ...x, merged: !!merged });
+    return { events: CM.events, lines: CM.lines.map(strip), scorecard: cmScorecard(), score: { ...CM.det.score }, settings: { ...CM.opts } };
+  },
+  commentarySettings(o) { Object.assign(CM.opts, o); cmReset(); return { ...CM.opts }; },
   profile() {
     const time = (fn) => { const t0 = performance.now(); fn(); return +(performance.now() - t0).toFixed(1); };
     return { snapshot_ms: time(() => snapshot(0, false)), snapshot_with_2d_ms: time(() => snapshot(0, true)), render_ms: time(render), json_kb: +(JSON.stringify(snapshot(0, true)).length / 1024).toFixed(1) };
