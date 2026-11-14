@@ -435,7 +435,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
           </div>
           <p class="note" id="cm-voice-note"></p>
           <ol class="cm-lines" id="cm-lines"></ol>
-          <p class="note">The commentator sees only what a court tracker would report: each player's team, number, court position and velocity, plus the ball's position. It never reads the simulator's ball state, holder or events. The number on the right is glass-to-voice: from the moment on the court to the first spoken word.</p>
+          <p class="note">The commentator sees only what a court tracker would report: each player's track, team, number with its probability (see Identities), court position and velocity, plus the ball's position. It never reads the simulator's ball state, holder or events. The number on the right is glass-to-voice: from the moment on the court to the first spoken word.</p>
         </section>
         <section>
           <h2>Latency <em>added before a line can be spoken</em></h2>
@@ -468,9 +468,25 @@ button:disabled { opacity: .5; cursor: not-allowed; }
           <p class="note">Gaussian noise on each position, independently every frame. Smoothing fits a line (a parabola for the ball) through the last frames.</p>
         </section>
         <section>
+          <h2>Identities <em>restarts the scorecard</em></h2>
+          <div class="field-row">
+            <label class="field">Confidence
+              <select id="cm-idmodel"><option value="heldout">Tracker, held-out</option><option value="tuning">Tracker, busy</option><option value="off">Always right</option></select>
+            </label>
+            <label class="field">Name at
+              <select id="cm-minprob"><option value="0">Any</option><option value="0.6">≥ 0.6</option><option value="0.8">≥ 0.8</option><option value="0.95">≥ 0.95</option></select>
+            </label>
+            <label class="field">If unsure
+              <select id="cm-unsure"><option value="team">Say the team</option><option value="skip">Say nothing</option></select>
+            </label>
+          </div>
+          <p class="note">A real court tracker isn't always sure who a player is. Here each identity gets a probability, and is wrong as often as gym-mv3dt's court tracker was at that probability (its held-out minute, or its busier tuning minutes). The commentator says a name only at or above the chosen probability; below it, it names the team or says nothing. A pass to an uncertain player is not said.</p>
+        </section>
+        <section>
           <h2>Scorecard <em>against the simulator's own events</em></h2>
           <div class="cm-table"><table id="cm-score"></table></div>
           <div class="readout" id="cm-final"></div>
+          <div class="readout" id="cm-names"></div>
           <div class="actions"><button class="btn" type="button" id="cm-reset">Restart scorecard</button></div>
         </section>
         <section>
@@ -2741,7 +2757,8 @@ const testState = () => ({ t: r4(GM.simTime), score: stats.pts.slice(), fga: sta
 /* =========================================================
    Commentary: live play-by-play from what a court tracker would see
    ---------------------------------------------------------
-   Every 1/30 s of game time the detector gets ONLY tracker-style input: each player's identity, team, court position
+   Every 1/30 s of game time the detector gets ONLY tracker-style input: each player's track, identity with its
+   probability (simulated by CmIdentities, which may be wrong), team, court position
    and velocity, plus the ball's 3D position (optionally with Gaussian noise). It never reads BALL.mode/holder, player
    actions or the event log. From that it finds passes, shots, makes and misses, rebounds, inbounds, steals and drives,
    turns them into lines, and speaks them through one voice (the browser's speech synthesis, or a timed stand-in).
@@ -2762,7 +2779,8 @@ const CM_MAX_WAIT = [4.0, 2.0, 0.6, 0.4];             // s a line may wait for t
 const CM_WPS = 3.0;                                    // words per second when the voice is simulated
 const CM_TEAM_NAME = Object.fromEntries(TEAMS.map((t) => [t.short, t.name[0] + t.name.slice(1).toLowerCase()]));
 const cmHd = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const cmWho = (p) => (p ? { identity: p.identity, team: p.team } : null);
+// a player as named in an event: track, the identity shown and its probability then (truth: for the scorecard only)
+const cmWho = (p) => (p ? { track: p.track, identity: p.identity, team: p.team, probability: p.probability, truth: p.truth } : null);
 const r4c = (v) => Math.round(v * 1e4) / 1e4;
 
 function cmLinFit(ts, vals) {                          // value and slope at the last time
@@ -2793,7 +2811,7 @@ class CmDetector {
     this.court = { rim_x: Math.abs(RIMS[0].x), half_l: HALF_L, arc_r: ARC_R, corner_y: CORNER_Z, lane_hw: LANE_HW };
     this.attack = Object.fromEntries(TEAMS.map((t, i) => [t.short, ATTACK[i]]));
     this.raw = []; this.hist = [];
-    this.holder = null; this.holderTeam = null; this.cand = null; this.candN = 0; this.awayN = 0;
+    this.holder = null; this.holderWho = null; this.cand = null; this.candN = 0; this.awayN = 0;   // holder: a track id
     this.pending = null; this.released = null; this.shot = null; this.lastShot = null;
     this.possession = null; this.possGained = [null, -1e9, false]; this.catch = null; this.driveFrom = null;
     this.score = Object.fromEntries(TEAMS.map((t) => [t.short, 0]));
@@ -2813,14 +2831,14 @@ class CmDetector {
     else spot = ang < 25 ? 'free-throw line' : ang > 65 ? `${side} baseline` : r < 5.5 ? `${side} elbow` : `${side} wing`;
     return { distance_m: Math.round(r * 100) / 100, three, spot };
   }
-  player(f, id) { return f.players.find((q) => q.identity === id) || null; }
+  player(f, track) { return f.players.find((q) => q.track === track) || null; }   // players are followed by track
   ev(type, t, frame, data) { const now = this.hist[this.hist.length - 1]; return { type, t: r4c(t), frame, t_confirmed: now.t, frame_confirmed: now.frame, ...data }; }
   smoothFrame(f) {
     this.raw.push(f); if (this.raw.length > this.smooth) this.raw.shift();
     const k = this.raw.length; if (k < 2) return f;
     const ts = this.raw.map((g) => g.t), out = { ...f, players: [] };
     for (const p of f.players) {
-      const seq = this.raw.map((g) => this.player(g, p.identity));
+      const seq = this.raw.map((g) => this.player(g, p.track));
       if (seq.some((q) => !q)) { out.players.push(p); continue; }
       out.players.push({ ...p, x: cmLinFit(ts, seq.map((q) => q.x))[0], y: cmLinFit(ts, seq.map((q) => q.y))[0] });
     }
@@ -2850,21 +2868,21 @@ class CmDetector {
     let best = null, bestD = Infinity;
     for (const p of f.players) { const d = cmHd(ball, p); if (d < bestD) { best = p; bestD = d; } }
     let ctrl = null;
-    const lim = this.holder ? CMC.CONTROL_DIST : CMC.LOOSE_DIST;
+    const lim = this.holder !== null ? CMC.CONTROL_DIST : CMC.LOOSE_DIST;
     if (best && bestD < lim && ball.z < 3.4) {
       const rel = bv ? Math.hypot(bv[0] - (best.vx || 0), bv[1] - (best.vy || 0)) : 0;
       if (rel < CMC.CONTROL_REL_V) ctrl = best;
     }
     if (this.shot && !this.shot.done) out.push(...this.followShot(f, ball));
-    if (this.holder) {
+    if (this.holder !== null) {
       const h = this.player(f, this.holder);
-      if (ctrl && ctrl.identity !== this.holder && (!h || cmHd(ball, h) > CMC.RELEASE_DIST)) {
-        this.candN = this.cand === ctrl.identity ? this.candN + 1 : 1; this.cand = ctrl.identity;
+      if (ctrl && ctrl.track !== this.holder && (!h || cmHd(ball, h) > CMC.RELEASE_DIST)) {
+        this.candN = this.cand === ctrl.track ? this.candN + 1 : 1; this.cand = ctrl.track;
         if (this.candN >= CMC.STRIP_FRAMES) { out.push(...this.release(h, 'loose')); out.push(...this.gain(ctrl)); }
         return out;
       }
       if (!h || cmHd(ball, h) > CMC.RELEASE_DIST) {
-        if (++this.awayN >= CMC.RELEASE_FRAMES) out.push(...this.release(h || { identity: this.holder, team: this.holderTeam }, null));
+        if (++this.awayN >= CMC.RELEASE_FRAMES) out.push(...this.release(h || this.holderWho, null));
       } else { this.awayN = 0; this.whileHeld(f, h, ball, out); }
       return out;
     }
@@ -2878,7 +2896,7 @@ class CmDetector {
       return out;
     }
     if (ctrl) {
-      this.candN = this.cand === ctrl.identity ? this.candN + 1 : 1; this.cand = ctrl.identity;
+      this.candN = this.cand === ctrl.track ? this.candN + 1 : 1; this.cand = ctrl.track;
       if (this.candN >= CMC.LOOSE_FRAMES) {
         const n = this.hist.length, t0 = n >= CMC.LOOSE_FRAMES ? this.hist[n - CMC.LOOSE_FRAMES].t : f.t;
         const fr0 = f.frame - CMC.LOOSE_FRAMES + 1;
@@ -2903,7 +2921,7 @@ class CmDetector {
   }
   gain(p, tGain, frGain) {
     const f = this.hist[this.hist.length - 1], out = [], rel = this.released, shot = this.lastShot;
-    this.holder = p.identity; this.holderTeam = p.team; this.cand = null; this.candN = 0; this.awayN = 0;
+    this.holder = p.track; this.holderWho = p; this.cand = null; this.candN = 0; this.awayN = 0;
     if (tGain === undefined) {
       const n = this.hist.length;
       tGain = n >= CMC.CONTROL_FRAMES ? this.hist[n - CMC.CONTROL_FRAMES].t : f.t; frGain = f.frame - CMC.CONTROL_FRAMES + 1;
@@ -2915,7 +2933,7 @@ class CmDetector {
       else { how = 'rebound'; out.push(this.ev('rebound', tGain, frGain, { player: cmWho(p), offensive: p.team === shot.team })); }
     } else if (rel && rel.kind === 'pass') {
       if (rel.from.team === p.team) {
-        how = 'pass'; passer = rel.from.identity;
+        how = 'pass'; passer = rel.from;
         out.push(this.ev('pass', rel.t, rel.frame, { passer: rel.from, receiver: cmWho(p), flight_s: r4c(tGain - rel.t) }));
       } else { how = 'steal'; out.push(this.ev('steal', tGain, frGain, { player: cmWho(p), from_player: rel.from })); }
     } else if (rel && rel.kind === 'loose' && rel.from.team !== p.team) {
@@ -2937,7 +2955,7 @@ class CmDetector {
     const hl = this.hist;
     let i = 0;
     for (let j = hl.length - 2; j >= 0; j--) {
-      const q = this.player(hl[j], h.identity);
+      const q = this.player(hl[j], h.track);
       if (q && hl[j].ball && cmHd(hl[j].ball, q) <= CMC.HELD_DIST) { i = j; break; }
     }
     const rf = hl[i], out = [];
@@ -2955,7 +2973,7 @@ class CmDetector {
     return out;
   }
   newShot(h, rf) {
-    const p = this.player(rf, h.identity) || h, team = p.team, z = this.zone(p.x, p.y, team), [rx, ry] = this.rim(team);
+    const p = this.player(rf, h.track) || h, team = p.team, z = this.zone(p.x, p.y, team), [rx, ry] = this.rim(team);
     let nd = null, dd = Infinity;
     for (const q of rf.players) if (q.team !== team) { const d = cmHd(p, q); if (d < dd) { dd = d; nd = q; } }
     const contest = CM_CONTEST.find(([lim]) => dd < lim)[1];
@@ -2998,12 +3016,24 @@ class CmDetector {
 }
 
 class CmNarrator {
-  constructor(seed) { this.rng = mulberry32(seed); this.shots = new Map(); }
+  // minProb: identity probability needed to say a name; unsure: 'team' (say the team instead) or 'skip' (say nothing)
+  constructor(seed, minProb = 0.8, unsure = 'team') {
+    this.rng = mulberry32(seed); this.shots = new Map(); this.minProb = minProb; this.unsure = unsure;
+    this.named = []; this.withheld = 0; this.byTeam = 0;
+  }
   pick(...o) { return o[Math.floor(this.rng() * o.length)]; }
   who(p) {
-    if (!p) return 'someone';
-    const id = typeof p === 'string' ? p : p.identity, [team, num] = id.split('-');
+    const id = !p ? null : typeof p === 'string' ? p : p.identity;
+    if (!id) return 'someone';
+    const [team, num] = id.split(id.includes(':') ? ':' : '-');
     return num ? `${CM_TEAM_NAME[team] || team} ${num}` : id;
+  }
+  sure(p) { return !!(p && p.identity) && (p.probability == null || p.probability >= this.minProb); }
+  name(p) { if (!this.sure(p)) return null; this.named.push(p); return this.who(p); }
+  subject(p) {                                         // the player a line is about; an uncertain one: the team, or null
+    const n = this.name(p);
+    if (n === null && this.unsure === 'team' && p && p.team) { this.byTeam++; return CM_TEAM_NAME[p.team] || p.team; }
+    return n;
   }
   describe(e) {
     let s;
@@ -3015,14 +3045,23 @@ class CmNarrator {
       if (e.fading) s = 'fading ' + s;
     }
     if (e.transition) s += ' in transition';
-    s += { 'very tightly contested': `, right over ${this.who(e.defender)}`, contested: `, ${this.who(e.defender)} contesting`, open: '', 'wide open': ', wide open' }[e.contest];
+    const d = e.contest === 'very tightly contested' || e.contest === 'contested' ? this.name(e.defender) : null;
+    s += { 'very tightly contested': d ? `, right over ${d}` : ', tightly contested', contested: d ? `, ${d} contesting` : ', contested',
+      open: '', 'wide open': ', wide open' }[e.contest];
     return s;
   }
   line(e) {
+    this.named = [];
+    const text = this.line_(e);
+    if (text === null && ['shot', 'rebound', 'steal', 'drive', 'pass'].includes(e.type)) this.withheld++;
+    return text;
+  }
+  line_(e) {
     const t = e.type;
     if (t === 'shot') {
       this.shots.set(e.t, e);
-      const who = this.who(e.shooter);
+      const who = this.subject(e.shooter);
+      if (who === null) return null;
       let s;
       if (e.kind === 'layup' || e.kind === 'floater') s = this.pick(`${who} to the rim`, `${who} goes up`);
       else if (e.creation === 'pull-up') s = `${who} pulls up` + (e.kind === 'three' ? ' for three' : '');
@@ -3031,37 +3070,77 @@ class CmNarrator {
       return s + '...';
     }
     if (t === 'shot_result') {
-      const shot = this.shots.get(e.shot_t), desc = shot ? this.describe(shot) : '';
+      const shot = this.shots.get(e.shot_t);
       if (!e.made) return this.pick('No good.', 'Off the rim.', 'Misses.');
       let s = e.three ? this.pick('Bang!', 'Splash!', 'Got it!') : this.pick('Good!', 'Scores!', 'Got it!');
+      const desc = shot ? this.describe(shot) : '';
       if (desc) s += ` ${desc[0].toUpperCase()}${desc.slice(1)}.`;
-      if (e.assist) s += ` ${this.pick('Feed from', 'Assist,', 'Set up by')} ${this.who(e.assist)}.`;
+      const passer = e.assist ? this.name(e.assist) : null;
+      if (passer) s += ` ${this.pick('Feed from', 'Assist,', 'Set up by')} ${passer}.`;
       const [a, b] = Object.entries(e.score).sort((x, y) => y[1] - x[1]);
       s += a[1] !== b[1] ? ` ${CM_TEAM_NAME[a[0]]} ${a[1]}, ${CM_TEAM_NAME[b[0]]} ${b[1]}.` : ` All square at ${a[1]}.`;
       return s;
     }
     if (t === 'rebound') {
-      const w = this.who(e.player);
+      const w = this.subject(e.player);
+      if (w === null) return null;
       return e.offensive ? this.pick(`Offensive board, ${w}!`, `${w} grabs the offensive rebound!`) : this.pick(`Rebound ${w}.`, `${w} cleans it up.`);
     }
-    if (t === 'steal') return `Picked off! ${this.who(e.player)} with the steal.`;
-    if (t === 'drive') return this.pick(`${this.who(e.player)} attacks the basket`, `${this.who(e.player)} drives`);
+    if (t === 'steal') { const w = this.subject(e.player); return w === null ? null : `Picked off! ${w} with the steal.`; }
+    if (t === 'drive') { const w = this.subject(e.player); return w === null ? null : this.pick(`${w} attacks the basket`, `${w} drives`); }
     if (t === 'inbound') return `${CM_TEAM_NAME[e.player.team]} inbound.`;
-    if (t === 'pass') return this.pick(`${this.who(e.passer)} to ${this.who(e.receiver)}.`, `Swing to ${this.who(e.receiver)}.`);
+    if (t === 'pass') {                                 // a pass to an uncertain player is not said
+      const r = this.name(e.receiver);
+      if (r === null) return null;
+      const p = this.name(e.passer);
+      return p ? this.pick(`${p} to ${r}.`, `Swing to ${r}.`) : `Swing to ${r}.`;
+    }
     return null;
+  }
+}
+
+/* Simulated court-tracker identities (hoopframe's own are always right): each player's identity holds for 2-8 s, then a
+   probability is drawn from the court tracker's measured distribution and the identity shown is wrong as often as the
+   tracker's were at that probability (another number on the same team). From gym-mv3dt reports/identity_confidence.md:
+   [low, high, detections, share right] per bin, and the share of detections with no identity. */
+const CM_ID_CAL = {
+  heldout: [[[0, 0.6, 67, 0.597], [0.6, 0.8, 90, 0.833], [0.8, 0.9, 231, 0.974], [0.9, 0.95, 77, 0.974], [0.95, 1, 753, 1]], 0.022],
+  tuning: [[[0, 0.6, 129, 0.527], [0.6, 0.8, 156, 0.859], [0.8, 0.9, 279, 0.907], [0.9, 0.95, 154, 0.903], [0.95, 1, 1219, 0.966]], 0.021],
+};
+class CmIdentities {
+  constructor(seed, cal) { this.rng = mulberry32(seed); this.cal = CM_ID_CAL[cal]; this.state = new Map(); }
+  get(p, t) {
+    if (!this.cal) return [p.id, 1];
+    let st = this.state.get(p.idx);
+    if (!st || t >= st[0]) {
+      const r = this.rng, [bins, none] = this.cal;
+      let shown = null, prob = 0;
+      if (r() >= none) {
+        let u = r() * bins.reduce((a, b) => a + b[2], 0), bin = bins[bins.length - 1];
+        for (const b of bins) { if ((u -= b[2]) <= 0) { bin = b; break; } }
+        prob = Math.round((bin[0] + (bin[1] - bin[0]) * r()) * 1000) / 1000;
+        const others = teamOf(p.team).filter((q) => q !== p);
+        shown = r() < bin[3] || !others.length ? p.id : others[Math.floor(r() * others.length)].id;
+      }
+      st = [t + 2 + 6 * r(), shown, prob];
+      this.state.set(p.idx, st);
+    }
+    return [st[1], st[2]];
   }
 }
 
 const CM_SETTINGS_KEY = 'hoopframe-commentary';
 const CM = {
   k: -1, det: null, nar: null, events: [], lines: [], queue: [], current: null, gt: [], noiseRng: null,
-  opts: { voice: false, captions: true, identityDelay: 1.0, captureS: 0.25, textS: 0, ttsS: 0.3, posNoise: 0, ballNoise: 0, smooth: 5 },
+  opts: { voice: false, captions: true, identityDelay: 1.0, captureS: 0.25, textS: 0, ttsS: 0.3, posNoise: 0, ballNoise: 0, smooth: 5,
+    idModel: 'heldout', minProb: 0.8, unsure: 'team' },
   ttsMs: [], shotLines: new Map(),
 };
 try { Object.assign(CM.opts, JSON.parse(localStorage.getItem(CM_SETTINGS_KEY) || '{}'), { voice: false }); } catch { /* storage unavailable */ }
 function cmReset() {
   CM.det = new CmDetector(CM.opts.smooth);
-  CM.nar = new CmNarrator(SEED ^ 0x0c0ffee);
+  CM.nar = new CmNarrator(SEED ^ 0x0c0ffee, CM.opts.minProb, CM.opts.unsure);
+  CM.ids = new CmIdentities(SEED ^ 0x1d1d, CM.opts.idModel);
   CM.noiseRng = mulberry32(SEED ^ 0x5eed);
   CM.events = []; CM.lines = []; CM.queue = []; CM.shotLines = new Map(); CM.k = -1;
   if (CM.current && CM.current.real && window.speechSynthesis) speechSynthesis.cancel();
@@ -3075,10 +3154,11 @@ function cmTrackerFrame(k) {                          // what a court tracker pl
   const pn = CM.opts.posNoise, bn = CM.opts.ballNoise, n = (s) => (s ? s * cmGauss() : 0);
   return {
     frame: k, t: k / CMC.FPS,
-    players: players.map((p) => ({
-      identity: p.id, team: TEAMS[p.team].short, x: p.pos.x + n(pn), y: -p.pos.z + n(pn),
-      vx: p.move.x * p.speed, vy: -p.move.y * p.speed,
-    })),
+    players: players.map((p) => {
+      const [identity, probability] = CM.ids.get(p, k / CMC.FPS);
+      return { track: p.idx, identity, probability, truth: p.id, team: TEAMS[p.team].short, x: p.pos.x + n(pn), y: -p.pos.z + n(pn),
+        vx: p.move.x * p.speed, vy: -p.move.y * p.speed };
+    }),
     ball: { x: BALL.pos.x + n(bn), y: -BALL.pos.z + n(bn), z: BALL.pos.y + n(bn) },
   };
 }
@@ -3096,10 +3176,15 @@ function commentaryTick() {
     const text = CM.nar.line(e);
     if (!text) continue;
     const o = CM.opts;
-    const x = { type: e.type, priority: CM_PRIORITY[e.type], t: e.t, made: e.made, text, dropped: true,
+    const x = { type: e.type, priority: CM_PRIORITY[e.type], t: e.t, made: e.made, text, dropped: true, named: [...CM.nar.named],
       ready: e.t_confirmed + o.captureS + o.identityDelay + o.textS };
     if (e.type === 'shot') CM.shotLines.set(e.t, x);
-    if (e.type === 'shot_result') { x.shotLine = CM.shotLines.get(e.shot_t) || null; x.shooter = CM.nar.who(e.shooter); }
+    if (e.type === 'shot_result') {
+      const sure = CM.nar.sure(e.shooter);
+      x.shotLine = CM.shotLines.get(e.shot_t) || null;
+      x.shooter = sure ? CM.nar.who(e.shooter) : o.unsure === 'team' ? CM_TEAM_NAME[e.shooter.team] : null;
+      x.shooterWho = sure ? e.shooter : null;
+    }
     CM.lines.push(x); CM.queue.push(x);
   }
   cmVoice(k / CMC.FPS);
@@ -3127,9 +3212,12 @@ function cmVoice(now) {
   let text = x.text;
   if (x.type === 'shot_result' && x.made === false) {
     const reb = q.find((y) => y.type === 'rebound' && y.ready <= now);
-    if (reb) { q.splice(q.indexOf(reb), 1); text += ' ' + reb.text; reb.merged = x; reb.dropped = false; }
+    if (reb) { q.splice(q.indexOf(reb), 1); text += ' ' + reb.text; reb.merged = x; reb.dropped = false; x.named.push(...reb.named); }
   }
-  if (x.type === 'shot_result' && x.shotLine && x.shotLine.dropped) text = `${x.shooter} — ${text}`;
+  if (x.type === 'shot_result' && (!x.shotLine || x.shotLine.dropped) && x.shooter) {
+    text = `${x.shooter} — ${text}`;
+    if (x.shooterWho) x.named.push(x.shooterWho);
+  }
   x.dropped = false; x.spoken = text;
   const setVoice = (tv) => {
     x.voice = tv; x.glass_to_voice = tv - x.t;
@@ -3181,17 +3269,17 @@ function cmScorecard() {
       lat: found.map(([g, d]) => d.t_confirmed - g.t) });
   };
   const [shots, xs] = cmMatch(by(gt, 'shot'), by(det, 'shot'));
-  tally('Shot', shots, xs, [['shooter', (g, d) => d.shooter.identity === g.shooter], ['2/3', (g, d) => d.three === g.three],
+  tally('Shot', shots, xs, [['shooter', (g, d) => d.shooter.truth === g.shooter], ['2/3', (g, d) => d.three === g.three],
     ['contest', (g, d) => (d.defender_m < 1.3) === g.contested]]);
   const res = new Map(by(gt, 'shot_result').map((e) => [e.shot_id, e])), dres = by(det, 'shot_result'), rp = [];
   for (const [g, d] of shots) { const gr = res.get(g.shot_id); if (gr) rp.push([gr, d ? dres.find((r) => Math.abs(r.shot_t - d.t) < 1e-3) || null : null]); }
   tally('Make/miss', rp, dres.filter((r) => !rp.some(([, d]) => d === r)), [['right', (g, d) => d.made === g.made]]);
   const [ps, xp] = cmMatch(by(gt, 'pass'), by(det, 'pass'));
-  tally('Pass', ps, xp, [['passer→receiver', (g, d) => d.passer.identity === g.from && d.receiver.identity === g.to]]);
+  tally('Pass', ps, xp, [['passer→receiver', (g, d) => d.passer.truth === g.from && d.receiver.truth === g.to]]);
   const [rb, xr] = cmMatch(by(gt, 'rebound'), by(det, 'rebound'));
-  tally('Rebound', rb, xr, [['player', (g, d) => d.player.identity === g.player]]);
+  tally('Rebound', rb, xr, [['player', (g, d) => d.player.truth === g.player]]);
   const [ib, xi] = cmMatch(by(gt, 'inbound'), by(det, 'inbound'));
-  tally('Inbound', ib, xi, [['player', (g, d) => d.player.identity === g.player]]);
+  tally('Inbound', ib, xi, [['player', (g, d) => d.player.truth === g.player]]);
   const [st, xst] = cmMatch(gt.filter((e) => e.type === 'possession'), by(det, 'steal'));
   tally('Steal', st, xst, []);
   return rows;
@@ -3212,6 +3300,11 @@ function cmRender() {
   $('cm-score').innerHTML = '<tr><th>Event</th><th>Truth</th><th>Found</th><th>False</th><th>Correct</th></tr>' + cmScorecard().map((r) =>
     `<tr><td>${r.name}</td><td>${r.gt}</td><td>${pct(r.found, r.gt)}</td><td>${r.false}</td><td>${r.checks || '–'}</td></tr>`).join('');
   $('cm-final').textContent = `Detected score ${Object.entries(CM.det.score).map(([t, v]) => `${CM_TEAM_NAME[t]} ${v}`).join(', ')} · actual ${TEAMS.map((t, i) => `${CM_TEAM_NAME[t.short]} ${stats.pts[i] - CM.ptsAt[i]}`).join(', ')}${CM.since ? ` (since ${timecode(CM.since).slice(3, 8)})` : ''}`;
+  const said = CM.lines.filter((x) => !x.dropped && !x.merged && x.voice !== undefined);
+  const names = said.flatMap((x) => x.named), wrong = names.filter((w) => w.identity !== w.truth).length;
+  $('cm-names').textContent = `Names said ${names.length}, wrong ${wrong}${names.length ? ` (${(100 * wrong / names.length).toFixed(1)} %)` : ''}`
+    + ` · lines naming the team instead ${CM.nar.byTeam} · not said ${CM.nar.withheld}`
+    + (CM.opts.idModel === 'off' ? ' · identities: always right (simulation off)' : '');
   const types = [['shot', 'Shot call'], ['shot_result', 'Result'], ['rebound', 'Rebound'], ['steal', 'Steal'], ['drive', 'Drive'], ['pass', 'Pass'], ['inbound', 'Inbound']];
   $('cm-lat').innerHTML = '<tr><th>Line</th><th>Said</th><th>Dropped</th><th>Median</th><th>90 %</th></tr>' + types.map(([ty, name]) => {
     const xs = CM.lines.filter((x) => x.type === ty && x.ready < GM.simTime - 4);
@@ -3229,6 +3322,9 @@ function cmBind() {
   const sel = (id, key, after) => { const e = $(id); e.value = String(o[key]); e.addEventListener('change', () => { o[key] = +e.value; cmSave(); if (after) after(); cmRender(); }); };
   sel('cm-delay', 'identityDelay'); sel('cm-capture', 'captureS'); sel('cm-text', 'textS');
   sel('cm-pnoise', 'posNoise', cmReset); sel('cm-bnoise', 'ballNoise', cmReset); sel('cm-smooth', 'smooth', cmReset);
+  sel('cm-minprob', 'minProb', cmReset);
+  const selS = (id, key) => { const e = $(id); e.value = o[key]; e.addEventListener('change', () => { o[key] = e.value; cmSave(); cmReset(); cmRender(); }); };
+  selS('cm-idmodel', 'idModel'); selS('cm-unsure', 'unsure');
   $('cm-voice').checked = o.voice;
   $('cm-voice').addEventListener('change', (ev) => {
     o.voice = ev.target.checked;

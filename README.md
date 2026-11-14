@@ -258,8 +258,17 @@ network, detector), and an optional rephrasing step for a language model. It als
 start (assumed 0.3 s until a line has been spoken aloud). **Tracker noise** adds Gaussian position noise, with
 optional smoothing.
 
-The **Scorecard** compares the detected events with hoopframe's own as the game runs. On seed 2, over 10
-minutes of game with no noise:
+**Identities** makes the names realistic. hoopframe's identities are always right, but a real court tracker's aren't,
+so by default each player's identity gets a probability and is wrong as often as gym-mv3dt's court tracker was at that
+probability on its held-out minute (each identity holds for 2-8 s; a wrong one is another number on the same team).
+The commentator says a name only at probability 0.8 or more. Below that, a shot call, rebound, steal or drive names the
+team instead ("Harbor pulls up...") or, if you choose, isn't said; a pass to an uncertain player isn't said, and a
+result is called without an uncertain defender's or passer's name. Players are followed by track, so a wrong name
+doesn't break the play. The other choices are the tracker's busier tuning minutes and "Always right".
+
+The **Scorecard** compares the detected events with hoopframe's own as the game runs, and counts the names said and how
+many were wrong. On seed 2, over 10
+minutes of game with no noise and identities always right:
 
 | Event | Found | Correct |
 | --- | --- | --- |
@@ -276,7 +285,9 @@ wrong rebounders and false steals come from players overlapping in the simulatio
 rebound, the wrong player can be closer to the ball.
 
 `window.hoopframe.commentary()` returns the detected events, the lines with their timing, and the scorecard.
-`window.hoopframe.commentarySettings({ posNoise: 0.2, smooth: 9 })` changes the settings for headless runs.
+`window.hoopframe.commentarySettings({ posNoise: 0.2, smooth: 9, idModel: 'off' })` changes the settings for headless
+runs (`idModel`: `heldout`, `tuning` or `off`; `minProb`; `unsure`: `team` or `skip`). With the default identities on
+seed 2, 5 of 237 names said were wrong (2.1 %), 8 lines named the team instead, and the events found were unchanged.
 The same detector in Python, for recorded takes and eventually the real tracker, is `tools/play_events.py` and
 `tools/narrate.py` in [gym-mv3dt](https://github.com/bauer-san/gym-mv3dt) (branch `claude/youthful-volta-5bfn6r` for now).
 
