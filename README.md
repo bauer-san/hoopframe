@@ -317,6 +317,8 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   They do not render or record.
 - There are no fouls, free throws, steals, turnovers, shot clock or periods. Play runs continuously.
 
-## License
+## Licence
 
-MIT. See [LICENSE](LICENSE). Three.js, mqtt.js and mp4-muxer load from jsDelivr at runtime and are MIT licensed by their authors.
+Copyright 2026 Ethos Engineering LLC. The code is licensed under the Apache License 2.0 ([LICENSE](LICENSE)); each code
+file carries SPDX tags. Third-party components keep their own licences: Three.js, mqtt.js and mp4-muxer load from
+jsDelivr at runtime and are MIT licensed by their authors.
