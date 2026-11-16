@@ -545,6 +545,11 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 // Seeded simulation RNG: the same seed replays the same game step for step (URL #seed-123 sets it).
 const SEED = (() => { const m = /seed-(\d+)/.exec(location.hash); return m ? (+m[1] >>> 0) : 20261111; })();
+// Steals (URL #steals-<rate>, default 1; 0 = none, and then the game of a seed is the one it was before steals existed):
+// a defender within reach of a pass may pick it off, the on-ball defender may take the dribble. Rate 1 gives about
+// one steal every two to three minutes for the two teams together; the rate scales the chance of each attempt.
+const STEALS = (() => { const m = /steals-(\d+(?:\.\d+)?)/.exec(location.hash); return m ? +m[1] : 1; })();
+const STEAL = { passReach: 1.0, passP: 0.02, stripReach: 1.25, stripRate: 0.012 }   // m, chance per try; m, chance per second;
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const rng = mulberry32(SEED);
 // Cosmetic randomness (floor planks, crowd, textures) has its own fixed seed: identical on every load, independent of the game seed.
@@ -1267,6 +1272,16 @@ function moveRefs(dt) {
   }
 }
 
+let stealInfo = {};                                  // the steal in progress: { from, kind: 'interception' | 'strip' }
+// The ball leaves its path (a pass) or the handler's hand (a dribble) for the defender's hands, in a short flight.
+function startSteal(by, from, kind) {
+  stealInfo = { from: from.id, kind };
+  BALL.mode = 'pass';
+  BALL.pass = { from, to: by, t: 0, dur: 0.14, p0: BALL.pos.clone(), bounce: false, steal: true, tried: new Set() };
+  BALL.holder = null; GM.handler = null; GM.driving = false;
+  for (const q of players) if (q.action === 'receive') q.action = 'none';
+  by.action = 'receive'; by.actT = 0;
+}
 function giveBall(p, changed, how = 'catch') {
   const prevTeam = GM.off;
   // a rebound caught off the rim/board before the ball reaches the floor still ends the shot as a miss
@@ -1286,7 +1301,7 @@ function giveBall(p, changed, how = 'catch') {
     GM.clear = distXZ(p.pos, RIM) > 11;              // caught in the backcourt: keep bringing it up
     GM.decideT = distXZ(p.pos, RIM) < 2.6 ? 0.35 : rand(0.7, 2.0);
   }
-  emit(how, { player: p.id, team: TEAMS[p.team].short, ...(how === 'rebound' ? { offensive: p.team === shot.team, shot_id: shot.id } : {}) });
+  emit(how, { player: p.id, team: TEAMS[p.team].short, ...(how === 'rebound' ? { offensive: p.team === shot.team, shot_id: shot.id } : {}), ...(how === 'steal' ? stealInfo : {}) });
   if (changed || p.team !== prevTeam || how === 'tipoff') emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
   if (changed && (how === 'inbound' || distXZ(p.pos, RIM) > 11)) startTransition(p, how);
 }
@@ -1342,7 +1357,7 @@ function fastBreak(h, dH) {
 function startPass(from, to, purpose = null) {
   const d = distXZ(from.pos, to.pos);
   BALL.mode = 'pass';
-  BALL.pass = { from, to, t: 0, dur: 0.22 + d / 13, p0: BALL.pos.clone(), bounce: d > 3 && d < 7 && rng() < 0.25 };
+  BALL.pass = { from, to, t: 0, dur: 0.22 + d / 13, p0: BALL.pos.clone(), bounce: d > 3 && d < 7 && rng() < 0.25, steal: false, tried: new Set() };
   BALL.holder = null;
   from.action = 'pass'; from.actT = 0;
   to.action = 'receive'; to.actT = 0;
@@ -1551,6 +1566,10 @@ function simStep(dt) {
       BALL.dribble += dt * (7 + h.speed * 0.9);
       local(h, -0.32, BALL_R + 0.8 * h.s * Math.abs(Math.sin(BALL.dribble)), 0.36, BALL.pos);
       ballMesh.rotateOnWorldAxis(tB.set(Math.cos(h.yaw), 0, -Math.sin(h.yaw)), dt * 6);
+      if (STEALS > 0 && GM.phase === 'play' && h.action === 'none') {             // the on-ball defender takes the dribble
+        const d = matchup(h);
+        if (d.onGround && d.action === 'none' && distXZ(d.pos, h.pos) < STEAL.stripReach && rng() < STEAL.stripRate * STEALS * dt) startSteal(d, h, 'strip');
+      }
     }
   } else if (BALL.mode === 'pass') {
     const ps = BALL.pass;
@@ -1568,7 +1587,16 @@ function simStep(dt) {
     }
     tB.set(dest.x - ps.p0.x, 0, dest.z - ps.p0.z);
     if (tB.lengthSq() > 1e-6) ballMesh.rotateOnWorldAxis(tB.normalize().cross(UP), -dt * 14);
-    if (u >= 1) { GM.passes++; giveBall(ps.to, false, 'catch'); }
+    if (u >= 1) {
+      if (ps.steal) { giveBall(ps.to, true, 'steal'); callout(`${ps.to.label} · Steal`, true); } else { GM.passes++; giveBall(ps.to, false, 'catch'); }
+    } else if (STEALS > 0 && !ps.steal && u > 0.2 && u < 0.9 && BALL.pos.y < 2.1) {
+      // a defender the ball passes within reach of gets one try at it
+      for (const q of teamOf(1 - ps.from.team)) {
+        if (ps.tried.has(q) || !q.onGround || distXZ(q.pos, BALL.pos) > STEAL.passReach) continue;
+        ps.tried.add(q);
+        if (rng() < STEAL.passP * STEALS) { startSteal(q, ps.from, 'interception'); break; }
+      }
+    }
   } else {
     stepBall(dt);
     const sp = BALL.vel.length();
@@ -3166,7 +3194,7 @@ function cmTrackerFrame(k) {                          // what a court tracker pl
 }
 function cmGround(e) {                                 // hoopframe's own events, for the scorecard only
   if (!CM_READY) return;
-  if (['shot', 'shot_result', 'pass', 'rebound', 'inbound'].includes(e.type) || (e.type === 'possession' && e.how === 'recover')) CM.gt.push(e);
+  if (['shot', 'shot_result', 'pass', 'rebound', 'inbound'].includes(e.type) || (e.type === 'possession' && (e.how === 'recover' || e.how === 'steal'))) CM.gt.push(e);
 }
 function commentaryTick() {
   if (!CM_READY) return;
@@ -3283,6 +3311,7 @@ function cmScorecard() {
   const [ib, xi] = cmMatch(by(gt, 'inbound'), by(det, 'inbound'));
   tally('Inbound', ib, xi, [['player', (g, d) => d.player.truth === g.player]]);
   const [st, xst] = cmMatch(gt.filter((e) => e.type === 'possession'), by(det, 'steal'));
+  // (possession with how 'steal' or 'recover': a change of possession without a shot)
   tally('Steal', st, xst, []);
   return rows;
 }

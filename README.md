@@ -46,7 +46,7 @@ HTTPS, the broker must be `wss://`, because browsers block `ws://` from secure p
 | `hoopframe/player/<id>` | 0 | One player, e.g. `hoopframe/player/HAR-23` |
 | `hoopframe/referees` | 0 | Both referees: `id`, `track`, `role` (`lead`/`trail`), position, velocity, keypoints |
 | `hoopframe/camera/<1-4>` | 0 | Calibration `K`, `R`, `t` and, if enabled, 2D `annotations` |
-| `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `possession`, `transition_start`, `transition_end`, `tipoff`, `recording_start`, `recording_stop` |
+| `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `steal`, `possession`, `transition_start`, `transition_end`, `tipoff`, `recording_start`, `recording_stop` |
 | `hoopframe/recorder` | 1 | Recording start/stop markers with `take` and frame counts |
 | `hoopframe/status` | 1, retained | `online`, session, seed, roster, referees. A last-will message flips it to `online: false` |
 
@@ -168,7 +168,7 @@ and its blur is included.
 
 ### Transitions and referees
 
-A change of possession (a defensive rebound, a made basket, or a loose ball recovered by the other team) sends
+A change of possession (a defensive rebound, a made basket, a steal, or a loose ball recovered by the other team) sends
 play to the other end:
 
 - **After a basket**, the nearest player of the team taking over steps out behind the end line and inbounds to a
@@ -181,7 +181,7 @@ play to the other end:
 - If no defender is back, the handler attacks the rim. A teammate who has beaten their defender down the floor may get
   the ball ahead (`purpose: "ahead"`). Otherwise the offence sets up in the half court.
 
-`transition_start` gives `team`, `from` (`made_basket`, `defensive_rebound` or `recover`), `attack_dir`, `handler`
+`transition_start` gives `team`, `from` (`made_basket`, `defensive_rebound`, `steal` or `recover`), `attack_dir`, `handler`
 and `first_pass_to`. `transition_end` gives `result` (`set_offense`, `fast_break`, `shot` or `timeout`) and
 `duration_s`. While a transition is running, every frame's `transition` field is set.
 
@@ -214,6 +214,17 @@ for k, g in enumerate(gt):
             x, y, w, h = map(int, p["bbox"])
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 ```
+
+## Steals
+
+A defender the ball passes within 1 m of gets one try at a pass (an `interception`), and the on-ball defender, within
+1.25 m of a dribbling handler, may take the ball (a `strip`). The ball then flies to the defender's hands in 0.14 s,
+and the other team attacks. Each steal emits `steal` (`player`, `team`, `from`: who lost it, `kind`) and `possession`
+with `how: "steal"`.
+
+`#steals-<rate>` in the URL scales the chance of each try. The default 1 gives about one steal every two to three
+minutes for the two teams together. `#steals-0` turns steals off, and a seed then replays the game it gave before
+steals existed; with steals on, the same seed gives a different game.
 
 ## Gym court and camera layout
 
@@ -315,7 +326,7 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   are test hooks for fast-forwarding, inspecting and timing the simulation. `snapshot()` returns the current
   ground-truth line. `events()` returns the events since its previous call; the first call starts the log.
   They do not render or record.
-- There are no fouls, free throws, steals, turnovers, shot clock or periods. Play runs continuously.
+- There are no fouls, free throws, out-of-bounds turnovers, shot clock or periods. Play runs continuously.
 
 ## Licence
 
