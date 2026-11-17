@@ -525,10 +525,10 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
    three-point arc running straight to the baseline), white walls, benches instead of stands.
    ========================================================= */
 const GYM = /(^#|&)court-gym(&|$)/.test(location.hash);
-// #game-1v1: one-on-one at the +x basket (one player of each team, two officials); &rules-tnc for The Next Chapter's
-// rules (default: the Ones Basketball League's). See "One-on-one" in README.md.
+// #game-1v1: one-on-one at the +x basket (one player of each team, two officials); rule set A by default, &rules-b
+// for rule set B. See "One-on-one" in README.md.
 const ONE = /(^#|&)game-1v1(&|$)/.test(location.hash);
-const RULES = /(^#|&)rules-tnc(&|$)/.test(location.hash) ? 'tnc' : 'obl';
+const RULES = /(^#|&)rules-b(&|$)/.test(location.hash) ? 'b' : 'a';
 const HALF_L = GYM ? 10.71 : 14.325, HALF_W = GYM ? 6.866 : 7.62;
 const RIM_H = 3.05, RIM_R = 0.2286, BALL_R = 0.12, G = 9.81;
 const BB_X = HALF_L - 1.22;
@@ -1245,10 +1245,10 @@ function assignSpots(team) {
 }
 /* ---------- one-on-one (#game-1v1) ----------
    Two players at the +x basket. The attacker starts each possession at the top of the key, 7.3 m from the rim:
-   - Ones Basketball League (OBL, default): after a make it is the loser's ball, checked at the top; after a
+   - Rule set A (default): after a make it is the loser's ball, checked at the top; after a
      defensive rebound or a steal the new attacker dribbles the ball out past the arc (clears it); offensive rebounds
      are live. A make is worth 1 inside the arc, 2 outside.
-   - The Next Chapter (TNC, &rules-tnc): every possession starts with a check behind the arc (the ball carried, not
+   - Rule set B (&rules-b): every possession starts with a check behind the arc (the ball carried, not
      dribbled); at most 4 dribbles in a possession: the attacker holds, takes up to 4 dribbles and shoots, or (one
      possession in ten) takes a 5th, a turnover and a check for the other player; a swiped ball is a turnover and a
      check. An offensive rebound is live with a new dribble count. A make is worth 2 inside the arc, 3 outside.
@@ -1266,7 +1266,7 @@ const attacker = () => players.find((p) => p.team === GM.off);
 const defenderOf = (p) => players.find((q) => q !== p);
 function newWay1v1() {
   const r = rand(1.5, 7.0), a = rand(-1.35, 1.35);
-  if (RULES === 'tnc' && rng() < 0.3) return newWay1v1At(rand(5.4, 7.2), a);
+  if (RULES === 'b' && rng() < 0.3) return newWay1v1At(rand(5.4, 7.2), a);
   return newWay1v1At(r, a);
 }
 function newWay1v1At(r, a) {
@@ -1281,10 +1281,10 @@ function possess1v1(p, how) {
   GM.off = p.team; setAttack(p.team);
   for (const q of players) if (q.action !== 'gather') q.action = 'none';
   O.drib = 0; O.wasLow = false; O.t = 0;
-  if (RULES === 'tnc') { O.maxDrib = rng() < 0.1 ? 5 : 4; O.holdT = how === 'rebound' ? 0 : rand(0.4, 1.5); }
+  if (RULES === 'b') { O.maxDrib = rng() < 0.1 ? 5 : 4; O.holdT = how === 'rebound' ? 0 : rand(0.4, 1.5); }
   if (changed) emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
   if (how === 'rebound') { O.phase = 'attack'; O.attackT = rand(1.0, 4.0); O.wayT = 0; }
-  else { O.phase = 'check'; O.carry = RULES === 'tnc' || how === 'check'; }
+  else { O.phase = 'check'; O.carry = RULES === 'b' || how === 'check'; }
 }
 function setup1v1() {
   const a = players.find((p) => p.team === 0), d = defenderOf(a);
@@ -1314,21 +1314,21 @@ function simStep1v1(dt) {
     moveToward(a, TOP, 3.6, dt, RIM);
     moveToward(d, tC.set(TOP.x + 1.5, 0, 0), 3.6, dt, a.pos);
     if ((distXZ(a.pos, TOP) < 0.3 && distXZ(d.pos, tC) < 1.2 && O.t > 1.2) || O.t > 8) {   // clearly behind the arc
-      O.phase = 'attack'; O.t = 0; O.attackT = rand(2.5, 8.0); O.wayT = 0; O.drib = 0; O.carry = RULES === 'tnc';
+      O.phase = 'attack'; O.t = 0; O.attackT = rand(2.5, 8.0); O.wayT = 0; O.drib = 0; O.carry = RULES === 'b';
     }
   } else if (O.phase === 'attack') {
     O.wayT -= dt;
     if (O.wayT <= 0 || distXZ(O.way, a.pos) < 0.3) { newWay1v1(); O.wayT = rand(0.6, 1.8); }
-    const holding = RULES === 'tnc' && O.t < O.holdT;
+    const holding = RULES === 'b' && O.t < O.holdT;
     O.carry = holding;
     if (holding) { a.speed = lerp(a.speed, 0, 1 - Math.exp(-10 * dt)); turnTo(a, face.x, face.z, dt, 8); }
     else moveToward(a, O.way, 2.0 + 2.5 * (0.5 + 0.5 * Math.sin(1.3 * GM.simTime + a.idx)), dt, null);
     guard(0.9 + 0.5 * (0.5 + 0.5 * Math.sin(0.7 * GM.simTime)));
-    if (RULES === 'tnc' && O.drib >= 5) {           // a 5th dribble: turnover, dead ball, the other player's check
+    if (RULES === 'b' && O.drib >= 5) {           // a 5th dribble: turnover, dead ball, the other player's check
       emit('turnover', { player: a.id, team: TEAMS[a.team].short, how: 'fifth_dribble' });
       callout(`${a.label} · 5th dribble`, true);
       possess1v1(d, 'check');
-    } else if ((RULES === 'obl' && O.t > O.attackT) || (RULES === 'tnc' && O.drib >= O.maxDrib && O.maxDrib === 4 && !O.wasLow) || dist < 1.2) {
+    } else if ((RULES === 'a' && O.t > O.attackT) || (RULES === 'b' && O.drib >= O.maxDrib && O.maxDrib === 4 && !O.wasLow) || dist < 1.2) {
       O.phase = 'gather'; startShot(a);
     } else if (STEALS > 0 && d.onGround && distXZ(d.pos, a.pos) < STEAL.stripReach && rng() < STEAL.stripRate * STEALS * 2 * dt) {
       O.steal = { t: 0, p0: BALL.pos.clone(), to: d, from: a };
@@ -1353,7 +1353,7 @@ function simStep1v1(dt) {
         if (shot.active && !shot.done) finishShot(false);   // caught before it reached the floor: a miss
         emit('rebound', { player: p.id, team: TEAMS[p.team].short, offensive, shot_id: shot.id });
         callout(`${p.label} · ${offensive ? 'Off. rebound' : 'Rebound'}`, !offensive);
-        possess1v1(p, offensive ? 'rebound' : (RULES === 'tnc' ? 'check' : 'clear'));
+        possess1v1(p, offensive ? 'rebound' : (RULES === 'b' ? 'check' : 'clear'));
         break;
       }
       if (chase && p.onGround && distXZ(p.pos, BALL.pos) < 1.0 && BALL.pos.y > 2.0 && BALL.pos.y < 3.4 && BALL.vel.y < 1.5 && !shot.made) {
@@ -1411,7 +1411,7 @@ function simStep1v1(dt) {
       O.steal = null;
       emit('steal', { player: S.to.id, team: TEAMS[S.to.team].short, from: S.from.id, kind: 'strip' });
       callout(`${S.to.label} · Steal`, true);
-      possess1v1(S.to, RULES === 'tnc' ? 'check' : 'clear');
+      possess1v1(S.to, RULES === 'b' ? 'check' : 'clear');
     }
   } else if (BALL.mode === 'free') {
     stepBall(dt);
@@ -1611,8 +1611,8 @@ function release(p) {
   p.action = 'follow'; p.actT = 0; p.jumpV = 0; p.onGround = false;
   renderStats();
 }
-// A make is worth 3 / 2 (outside / inside the arc); in one-on-one under OBL rules 2 / 1.
-const shotPoints = () => (ONE && RULES === 'obl' ? (shot.three ? 2 : 1) : (shot.three ? 3 : 2));
+// A make is worth 3 / 2 (outside / inside the arc); in one-on-one under rule set A 2 / 1.
+const shotPoints = () => (ONE && RULES === 'a' ? (shot.three ? 2 : 1) : (shot.three ? 3 : 2));
 function finishShot(made) {
   shot.done = true; shot.made = made;
   const who = shot.shooter ? shot.shooter.label : '';

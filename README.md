@@ -217,9 +217,9 @@ for k, g in enumerate(gt):
 
 ## One-on-one
 
-[![One-on-one under TNC rules, seen by the #cams-1v1 cameras](docs/sample_1v1.gif)](docs/sample_1v1.mp4)
+[![One-on-one under rule set B, seen by the #cams-1v1 cameras](docs/sample_1v1.gif)](docs/sample_1v1.mp4)
 
-*20 seconds of `#court-gym&seed-5&game-1v1&rules-tnc&cams-1v1` from the built-in recorder (fast render, 0° shutter),
+*20 seconds of `#court-gym&seed-5&game-1v1&rules-b&cams-1v1` from the built-in recorder (fast render, 0° shutter),
 the four cameras composed 2 × 2: a make, the loser's check, a 5th-dribble turnover and another make.*
 
 `#game-1v1` plays one-on-one at the +x basket: one player of each team and two officials, who work the half court
@@ -229,10 +229,10 @@ possession at the top of the key (7.3 m from the rim), dribbles between spots in
 away from the defender, who guards 0.9-1.4 m off on the line to the basket, and shoots with the usual gather, release
 and ball flight. A loose ball goes to the first player to reach it. Two rule sets:
 
-- **Ones Basketball League** (default): a make is worth 1 inside the arc and 2 outside; after a make it is the loser's
+- **Rule set A** (default): a make is worth 1 inside the arc and 2 outside; after a make it is the loser's
   ball, checked at the top; after a defensive rebound or a steal the new attacker dribbles the ball out past the arc;
   offensive rebounds are live.
-- **The Next Chapter** (`&rules-tnc`): 2 inside the arc, 3 outside; every possession starts with a check behind the
+- **Rule set B** (`&rules-b`): 2 inside the arc, 3 outside; every possession starts with a check behind the
   arc (the ball carried there); at most 4 dribbles: the attacker holds the ball, takes up to 4 dribbles and shoots, or
   (one possession in ten) takes a 5th, a turnover and a check for the other player; a swiped ball is a turnover and a
   check. An offensive rebound is live with a new dribble count.
