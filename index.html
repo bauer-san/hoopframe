@@ -525,7 +525,7 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
    three-point arc running straight to the baseline), white walls, benches instead of stands.
    ========================================================= */
 const GYM = /(^#|&)court-gym(&|$)/.test(location.hash);
-// #game-1v1: one-on-one at the +x basket (one player of each team, no officials); &rules-tnc for The Next Chapter's
+// #game-1v1: one-on-one at the +x basket (one player of each team, two officials); &rules-tnc for The Next Chapter's
 // rules (default: the Ones Basketball League's). See "One-on-one" in README.md.
 const ONE = /(^#|&)game-1v1(&|$)/.test(location.hash);
 const RULES = /(^#|&)rules-tnc(&|$)/.test(location.hash) ? 'tnc' : 'obl';
@@ -1182,7 +1182,7 @@ for (let team = 0; team < 2; team++) for (let i = 0; i < 5; i++) {
   p.rig.meshes.forEach((m) => { m.userData.pid = p.idx; });
   players.push(p);
 }
-if (ONE) {                                          // one-on-one: the first player of each team; the others leave
+if (ONE) {                                          // one-on-one: the first player of each team (and both officials)
   for (const p of players.filter((q) => q.i !== 0)) { scene.remove(p.rig.root, p.rig.blob); }
   players.splice(0, players.length, ...players.filter((q) => q.i === 0));
   players.forEach((p, k) => { p.idx = k; p.rig.meshes.forEach((m) => { m.userData.pid = k; }); });
@@ -1193,7 +1193,7 @@ if (ONE) {                                          // one-on-one: the first pla
 // side. On a change of possession the trail runs ahead down their sideline to become the new lead and the lead becomes
 // the new trail, so each official stays on their own side.
 const refs = [];
-for (const side of ONE ? [] : [-1, 1]) {           // no officials in one-on-one
+for (const side of [-1, 1]) {
   const k = refs.length;
   const r = {
     ref: true, side, team: -1, i: -1, num: 0, label: `Referee ${k + 1}`, s: [0.915, 0.94][k], role: 'trail',
@@ -1255,6 +1255,8 @@ function assignSpots(team) {
    The attacker dribbles between spots inside the arc with the ball on the side away from the defender, who guards
    0.9-1.4 m off on the line to the basket; then shoots (hoopframe's own gather, release and ball flight). The
    defender may take the dribble (a strip, #steals-<rate>). A loose ball goes to the first player to reach it.
+   The two officials work the half court as in 5v5 at the attacked basket (refTarget): the lead on the end line beyond
+   it, the trail on the other sideline, level with or behind the ball (never past the top of the key).
    Events: possession (how: check, clear, rebound, steal), dribble (n: the count in the possession), turnover (how:
    fifth_dribble), and hoopframe's shot, shot_result, rebound, steal. */
 const O = { phase: 'check', t: 0, carry: false, attackT: 0, way: new THREE.Vector3(), wayT: 0, drib: 0, maxDrib: 4,
@@ -1291,6 +1293,7 @@ function setup1v1() {
   setAttack(0);
   possess1v1(a, 'check');
   BALL.pos.set(a.pos.x, 1.05, a.pos.z);
+  for (const r of refs) { refTarget(r, r.pos); r.yaw = Math.atan2(a.pos.x - r.pos.x, a.pos.z - r.pos.z); }
 }
 function simStep1v1(dt) {
   GM.simTime += dt;
@@ -1417,13 +1420,16 @@ function simStep1v1(dt) {
     if (O.phase === 'flight' && (shot.done || shot.rim || shot.board)) O.phase = 'loose';
   }
   for (const p of players) clampCourt(p);
+  moveRefs(dt);
   for (const p of bodies) p.stride += dt * (2 + p.speed * 1.9);
-  const p = players[0], q = players[1];             // body separation
-  const dx = q.pos.x - p.pos.x, dz = q.pos.z - p.pos.z, dd = Math.hypot(dx, dz), min = 0.58;
-  if (dd < min && dd > 1e-4) {
-    const push = (min - dd) / 2, pf = p.action === 'gather' ? 0 : 1, qf = q.action === 'gather' ? 0 : 1;
-    p.pos.x -= (dx / dd) * push * pf; p.pos.z -= (dz / dd) * push * pf;
-    q.pos.x += (dx / dd) * push * qf; q.pos.z += (dz / dd) * push * qf;
+  for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {   // body separation
+    const p = bodies[i], q = bodies[j];
+    const dx = q.pos.x - p.pos.x, dz = q.pos.z - p.pos.z, dd = Math.hypot(dx, dz), min = 0.58;
+    if (dd < min && dd > 1e-4) {
+      const push = (min - dd) / 2, pf = p.action === 'gather' ? 0 : 1, qf = q.action === 'gather' ? 0 : 1;
+      p.pos.x -= (dx / dd) * push * pf; p.pos.z -= (dz / dd) * push * pf;
+      q.pos.x += (dx / dd) * push * qf; q.pos.z += (dz / dd) * push * qf;
+    }
   }
   commentaryTick();
 }
