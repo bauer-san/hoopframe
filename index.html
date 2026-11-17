@@ -1313,7 +1313,7 @@ function simStep1v1(dt) {
   if (O.phase === 'check') {                        // to the top of the key; then play
     moveToward(a, TOP, 3.6, dt, RIM);
     moveToward(d, tC.set(TOP.x + 1.5, 0, 0), 3.6, dt, a.pos);
-    if ((distXZ(a.pos, TOP) < 0.6 && distXZ(d.pos, tC) < 1.2 && O.t > 1.2) || O.t > 6) {
+    if ((distXZ(a.pos, TOP) < 0.3 && distXZ(d.pos, tC) < 1.2 && O.t > 1.2) || O.t > 8) {   // clearly behind the arc
       O.phase = 'attack'; O.t = 0; O.attackT = rand(2.5, 8.0); O.wayT = 0; O.drib = 0; O.carry = RULES === 'tnc';
     }
   } else if (O.phase === 'attack') {
