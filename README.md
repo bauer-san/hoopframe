@@ -217,6 +217,11 @@ for k, g in enumerate(gt):
 
 ## One-on-one
 
+[![One-on-one under TNC rules, seen by the #cams-1v1 cameras](docs/sample_1v1.gif)](docs/sample_1v1.mp4)
+
+*20 seconds of `#court-gym&seed-5&game-1v1&rules-tnc&cams-1v1` from the built-in recorder (fast render, 0° shutter),
+the four cameras composed 2 × 2: a make, the loser's check, a 5th-dribble turnover and another make.*
+
 `#game-1v1` plays one-on-one at the +x basket: one player of each team, no officials. The attacker starts each
 possession at the top of the key (7.3 m from the rim), dribbles between spots inside the arc with the ball on the side
 away from the defender, who guards 0.9-1.4 m off on the line to the basket, and shoots with the usual gather, release
@@ -241,6 +246,8 @@ the dribble (`#steals-<rate>`). With `#game-1v1` off, every seed plays the same 
 - `#cams-1v1oh`: the same with the ceiling camera above the key (6.9 m) instead of the end wall.
 
 The rim camera, over the top edge of the backboard, frames only the rim: it shows makes and misses, nothing else.
+
+Not yet modelled: real 1v1 games have two officials on the floor; this mode has none.
 
 ## Steals
 
