@@ -525,6 +525,10 @@ import { Reflector } from 'three/addons/objects/Reflector.js';
    three-point arc running straight to the baseline), white walls, benches instead of stands.
    ========================================================= */
 const GYM = /(^#|&)court-gym(&|$)/.test(location.hash);
+// #game-1v1: one-on-one at the +x basket (one player of each team, no officials); &rules-tnc for The Next Chapter's
+// rules (default: the Ones Basketball League's). See "One-on-one" in README.md.
+const ONE = /(^#|&)game-1v1(&|$)/.test(location.hash);
+const RULES = /(^#|&)rules-tnc(&|$)/.test(location.hash) ? 'tnc' : 'obl';
 const HALF_L = GYM ? 10.71 : 14.325, HALF_W = GYM ? 6.866 : 7.62;
 const RIM_H = 3.05, RIM_R = 0.2286, BALL_R = 0.12, G = 9.81;
 const BB_X = HALF_L - 1.22;
@@ -1158,6 +1162,7 @@ const SPOTS0 = [                                 // offensive spots for the +x b
 const SPOTS = SPOTS0.map((v) => v.clone());        // the same spots at the basket being attacked
 // Point play at team t's basket: the half court is rotated 180 degrees about the centre for the -x end.
 function setAttack(t) {
+  if (ONE) t = 0;                                  // one-on-one: both players attack the +x basket
   GM.dir = ATTACK[t];
   RIM.copy(RIMS[t]);
   SPOTS.forEach((v, k) => v.set(GM.dir * SPOTS0[k].x, 0, GM.dir * SPOTS0[k].z));
@@ -1177,13 +1182,18 @@ for (let team = 0; team < 2; team++) for (let i = 0; i < 5; i++) {
   p.rig.meshes.forEach((m) => { m.userData.pid = p.idx; });
   players.push(p);
 }
+if (ONE) {                                          // one-on-one: the first player of each team; the others leave
+  for (const p of players.filter((q) => q.i !== 0)) { scene.remove(p.rig.root, p.rig.blob); }
+  players.splice(0, players.length, ...players.filter((q) => q.i === 0));
+  players.forEach((p, k) => { p.idx = k; p.rig.meshes.forEach((m) => { m.userData.pid = k; }); });
+}
 // Two officials in two-person mechanics. REF-1 works the -z side of the court and REF-2 the +z side. Facing the
 // basket being attacked, the trail is on the sideline to the left, level with or behind the ball; the lead is on the
 // end line beyond that basket, on the other side of the lane, closing toward the lane when the ball is on the far
 // side. On a change of possession the trail runs ahead down their sideline to become the new lead and the lead becomes
 // the new trail, so each official stays on their own side.
 const refs = [];
-for (const side of [-1, 1]) {
+for (const side of ONE ? [] : [-1, 1]) {           // no officials in one-on-one
   const k = refs.length;
   const r = {
     ref: true, side, team: -1, i: -1, num: 0, label: `Referee ${k + 1}`, s: [0.915, 0.94][k], role: 'trail',
@@ -1233,8 +1243,194 @@ function assignSpots(team) {
     if (p === handler) p.spot = 0; else p.spot = order[k++];
   }
 }
+/* ---------- one-on-one (#game-1v1) ----------
+   Two players at the +x basket. The attacker starts each possession at the top of the key, 7.3 m from the rim:
+   - Ones Basketball League (OBL, default): after a make it is the loser's ball, checked at the top; after a
+     defensive rebound or a steal the new attacker dribbles the ball out past the arc (clears it); offensive rebounds
+     are live. A make is worth 1 inside the arc, 2 outside.
+   - The Next Chapter (TNC, &rules-tnc): every possession starts with a check behind the arc (the ball carried, not
+     dribbled); at most 4 dribbles in a possession: the attacker holds, takes up to 4 dribbles and shoots, or (one
+     possession in ten) takes a 5th, a turnover and a check for the other player; a swiped ball is a turnover and a
+     check. An offensive rebound is live with a new dribble count. A make is worth 2 inside the arc, 3 outside.
+   The attacker dribbles between spots inside the arc with the ball on the side away from the defender, who guards
+   0.9-1.4 m off on the line to the basket; then shoots (hoopframe's own gather, release and ball flight). The
+   defender may take the dribble (a strip, #steals-<rate>). A loose ball goes to the first player to reach it.
+   Events: possession (how: check, clear, rebound, steal), dribble (n: the count in the possession), turnover (how:
+   fifth_dribble), and hoopframe's shot, shot_result, rebound, steal. */
+const O = { phase: 'check', t: 0, carry: false, attackT: 0, way: new THREE.Vector3(), wayT: 0, drib: 0, maxDrib: 4,
+            holdT: 0, wasLow: false, hand: 1, steal: null, looseT: 0 };
+const TOP = new THREE.Vector3(RIMS[0].x - 7.3, 0, 0);
+const attacker = () => players.find((p) => p.team === GM.off);
+const defenderOf = (p) => players.find((q) => q !== p);
+function newWay1v1() {
+  const r = rand(1.5, 7.0), a = rand(-1.35, 1.35);
+  if (RULES === 'tnc' && rng() < 0.3) return newWay1v1At(rand(5.4, 7.2), a);
+  return newWay1v1At(r, a);
+}
+function newWay1v1At(r, a) {
+  return O.way.set(clamp(RIMS[0].x - r * Math.cos(a), 0.8, HALF_L - 0.6), 0, clamp(r * Math.sin(a), -HALF_W + 0.8, HALF_W - 0.8));
+}
+// p has the ball; how: 'check' (a check at the top: the ball carried there), 'clear' (dribbled out past the arc),
+// 'rebound' (offensive: play on).
+function possess1v1(p, how) {
+  const changed = p.team !== GM.off || how === 'check';
+  if (shot.active && !shot.done) finishShot(false);
+  BALL.mode = 'held'; BALL.holder = p; BALL.pass = null; GM.handler = p;
+  GM.off = p.team; setAttack(p.team);
+  for (const q of players) if (q.action !== 'gather') q.action = 'none';
+  O.drib = 0; O.wasLow = false; O.t = 0;
+  if (RULES === 'tnc') { O.maxDrib = rng() < 0.1 ? 5 : 4; O.holdT = how === 'rebound' ? 0 : rand(0.4, 1.5); }
+  if (changed) emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
+  if (how === 'rebound') { O.phase = 'attack'; O.attackT = rand(1.0, 4.0); O.wayT = 0; }
+  else { O.phase = 'check'; O.carry = RULES === 'tnc' || how === 'check'; }
+}
+function setup1v1() {
+  const a = players.find((p) => p.team === 0), d = defenderOf(a);
+  a.pos.set(TOP.x, 0, 0.3); d.pos.set(TOP.x + 1.4, 0, -0.2);
+  a.yaw = d.yaw = Math.PI / 2;
+  setAttack(0);
+  possess1v1(a, 'check');
+  BALL.pos.set(a.pos.x, 1.05, a.pos.z);
+}
+function simStep1v1(dt) {
+  GM.simTime += dt;
+  O.t += dt;
+  for (const p of players) p.actT += dt;
+  const a = attacker(), d = defenderOf(a);
+  const toRim = tA.set(RIM.x - a.pos.x, 0, RIM.z - a.pos.z), dist = toRim.length() || 1;
+  const face = toRim.multiplyScalar(1 / dist).clone();
+  for (const p of players) {                        // airborne: the shooter's follow-through, a contest, a rebound
+    if (p.action !== 'gather' && !p.onGround) {
+      p.jumpV -= G * dt; p.jumpY += p.jumpV * dt;
+      if (p.jumpY <= 0) { p.jumpY = 0; p.jumpV = 0; p.onGround = true; if (['follow', 'contest', 'rebound'].includes(p.action)) p.action = 'none'; }
+    }
+  }
+  const guard = (gap) => { const g = tB.copy(a.pos).addScaledVector(face, Math.min(gap, Math.max(dist - 0.4, 0.2))); moveToward(d, g, 5.0, dt, a.pos); };
+
+  if (O.phase === 'check') {                        // to the top of the key; then play
+    moveToward(a, TOP, 3.6, dt, RIM);
+    moveToward(d, tC.set(TOP.x + 1.5, 0, 0), 3.6, dt, a.pos);
+    if ((distXZ(a.pos, TOP) < 0.6 && distXZ(d.pos, tC) < 1.2 && O.t > 1.2) || O.t > 6) {
+      O.phase = 'attack'; O.t = 0; O.attackT = rand(2.5, 8.0); O.wayT = 0; O.drib = 0; O.carry = RULES === 'tnc';
+    }
+  } else if (O.phase === 'attack') {
+    O.wayT -= dt;
+    if (O.wayT <= 0 || distXZ(O.way, a.pos) < 0.3) { newWay1v1(); O.wayT = rand(0.6, 1.8); }
+    const holding = RULES === 'tnc' && O.t < O.holdT;
+    O.carry = holding;
+    if (holding) { a.speed = lerp(a.speed, 0, 1 - Math.exp(-10 * dt)); turnTo(a, face.x, face.z, dt, 8); }
+    else moveToward(a, O.way, 2.0 + 2.5 * (0.5 + 0.5 * Math.sin(1.3 * GM.simTime + a.idx)), dt, null);
+    guard(0.9 + 0.5 * (0.5 + 0.5 * Math.sin(0.7 * GM.simTime)));
+    if (RULES === 'tnc' && O.drib >= 5) {           // a 5th dribble: turnover, dead ball, the other player's check
+      emit('turnover', { player: a.id, team: TEAMS[a.team].short, how: 'fifth_dribble' });
+      callout(`${a.label} · 5th dribble`, true);
+      possess1v1(d, 'check');
+    } else if ((RULES === 'obl' && O.t > O.attackT) || (RULES === 'tnc' && O.drib >= O.maxDrib && O.maxDrib === 4 && !O.wasLow) || dist < 1.2) {
+      O.phase = 'gather'; startShot(a);
+    } else if (STEALS > 0 && d.onGround && distXZ(d.pos, a.pos) < STEAL.stripReach && rng() < STEAL.stripRate * STEALS * 2 * dt) {
+      O.steal = { t: 0, p0: BALL.pos.clone(), to: d, from: a };
+      BALL.mode = 'pass'; BALL.holder = null; O.phase = 'steal';
+    }
+  } else if (O.phase === 'gather') {
+    a.speed = lerp(a.speed, 0, 1 - Math.exp(-14 * dt));
+    guard(0.9);
+    if (d.action === 'contest' && d.actT > 0 && d.onGround && d.actT < 0.1) { d.jumpV = 3.4; d.onGround = false; }
+  } else if (O.phase === 'loose' || O.phase === 'flight') {
+    O.looseT += dt;
+    const madeTo = shot.done && shot.made ? players.find((q) => q.team !== shot.team) : null;
+    for (const p of players) {
+      if (!p.onGround) { p.speed *= 1 - 2 * dt; continue; }
+      const chase = O.phase === 'loose' && (!madeTo || p === madeTo);
+      if (chase) moveToward(p, tC.set(BALL.pos.x, 0, BALL.pos.z), 5.6, dt, BALL.pos);
+      else { const dir = tD.set(p.pos.x - RIM.x, 0, p.pos.z - RIM.z).normalize(); moveToward(p, tC.set(RIM.x + dir.x * 1.9, 0, RIM.z + dir.z * 1.9), 3.5, dt, BALL.pos); }
+      const reach = 2.25 * p.s + p.jumpY;
+      if (chase && distXZ(p.pos, BALL.pos) < 0.65 && BALL.pos.y < reach) {
+        if (madeTo) { possess1v1(p, 'check'); break; }
+        const offensive = p.team === shot.team;
+        if (shot.active && !shot.done) finishShot(false);   // caught before it reached the floor: a miss
+        emit('rebound', { player: p.id, team: TEAMS[p.team].short, offensive, shot_id: shot.id });
+        callout(`${p.label} · ${offensive ? 'Off. rebound' : 'Rebound'}`, !offensive);
+        possess1v1(p, offensive ? 'rebound' : (RULES === 'tnc' ? 'check' : 'clear'));
+        break;
+      }
+      if (chase && p.onGround && distXZ(p.pos, BALL.pos) < 1.0 && BALL.pos.y > 2.0 && BALL.pos.y < 3.4 && BALL.vel.y < 1.5 && !shot.made) {
+        p.jumpV = 3.7; p.onGround = false; p.action = 'rebound';
+      }
+    }
+    if (O.looseT > 8 && BALL.mode === 'free') {    // out of reach: the nearest player takes it, checked
+      const p = players.reduce((x, y) => (distXZ(x.pos, BALL.pos) <= distXZ(y.pos, BALL.pos) ? x : y));
+      possess1v1(p, 'check');
+    }
+  } else if (O.phase === 'steal') {
+    guard(0.0);
+  }
+
+  // ---- ball
+  if (BALL.mode === 'held') {
+    const h = BALL.holder;
+    if (h.action === 'gather') {
+      const t = h.actT;
+      const hand = local(h, -0.32, BALL_R + 0.78 * Math.abs(Math.sin(BALL.dribble)), 0.36, tB);
+      const chest = local(h, 0, 1.3 * h.s, 0.36, tC);
+      if (t < 0.3) {
+        const u = t / 0.3;
+        h.crouch = u; h.jumpY = 0; h.raise = u * 0.45;
+        BALL.pos.lerpVectors(hand, chest, smooth(u));
+      } else {
+        const u = Math.min(1, (t - 0.3) / 0.45);
+        h.crouch = 1 - u; h.jumpY = 0.5 * Math.sin((u * Math.PI) / 2); h.raise = 0.45 + 0.55 * u;
+        const rel = local(h, -0.06, 2.4 * h.s + h.jumpY, 0.2, tA);
+        chest.y += h.jumpY * u;
+        BALL.pos.lerpVectors(chest, rel, smooth(u));
+      }
+      turnTo(h, RIM.x - h.pos.x, RIM.z - h.pos.z, dt, 14);
+      if (t >= 0.75) { release(h); O.phase = 'flight'; O.looseT = 0; }
+    } else if (O.carry) {                           // held at the hip: no dribble
+      local(h, -0.25 * O.hand, 1.05 * h.s, 0.3, BALL.pos);
+      BALL.dribble = Math.PI / 2; O.wasLow = false;
+    } else {
+      const other = defenderOf(h), c = Math.cos(h.yaw), sn = Math.sin(h.yaw);
+      const lateral = (other.pos.x - h.pos.x) * c - (other.pos.z - h.pos.z) * sn;   // the other player's side
+      O.hand += ((lateral > 0 ? -1 : 1) - O.hand) * (1 - Math.exp(-3 * dt));        // dribble on the far side
+      BALL.dribble += dt * (7 + h.speed * 0.9);
+      local(h, 0.36 * O.hand, BALL_R + 0.8 * h.s * Math.abs(Math.sin(BALL.dribble)), 0.3, BALL.pos);
+      ballMesh.rotateOnWorldAxis(tB.set(Math.cos(h.yaw), 0, -Math.sin(h.yaw)), dt * 6);
+      const low = BALL.pos.y < BALL_R + 0.12;
+      if (low && !O.wasLow && O.phase === 'attack') { O.drib++; emit('dribble', { player: h.id, n: O.drib }); }
+      O.wasLow = low;
+    }
+  } else if (BALL.mode === 'pass' && O.steal) {     // a strip: the ball to the defender's hands
+    const S = O.steal;
+    S.t += dt;
+    const u = Math.min(1, S.t / 0.14);
+    BALL.pos.lerpVectors(S.p0, local(S.to, 0, 1.2 * S.to.s, 0.38, tC), u);
+    if (u >= 1) {
+      O.steal = null;
+      emit('steal', { player: S.to.id, team: TEAMS[S.to.team].short, from: S.from.id, kind: 'strip' });
+      callout(`${S.to.label} · Steal`, true);
+      possess1v1(S.to, RULES === 'tnc' ? 'check' : 'clear');
+    }
+  } else if (BALL.mode === 'free') {
+    stepBall(dt);
+    const w = BALL.omega.length();
+    if (w > 1e-4) ballMesh.rotateOnWorldAxis(tB.copy(BALL.omega).multiplyScalar(1 / w), w * dt);
+    if (O.phase === 'flight' && (shot.done || shot.rim || shot.board)) O.phase = 'loose';
+  }
+  for (const p of players) clampCourt(p);
+  for (const p of bodies) p.stride += dt * (2 + p.speed * 1.9);
+  const p = players[0], q = players[1];             // body separation
+  const dx = q.pos.x - p.pos.x, dz = q.pos.z - p.pos.z, dd = Math.hypot(dx, dz), min = 0.58;
+  if (dd < min && dd > 1e-4) {
+    const push = (min - dd) / 2, pf = p.action === 'gather' ? 0 : 1, qf = q.action === 'gather' ? 0 : 1;
+    p.pos.x -= (dx / dd) * push * pf; p.pos.z -= (dz / dd) * push * pf;
+    q.pos.x += (dx / dd) * push * qf; q.pos.z += (dz / dd) * push * qf;
+  }
+  commentaryTick();
+}
+
 // tip-off positions
 (function setup() {
+  if (ONE) return setup1v1();
   assignSpots(0);
   for (const p of players) {
     const off = p.team === 0;
@@ -1409,11 +1605,13 @@ function release(p) {
   p.action = 'follow'; p.actT = 0; p.jumpV = 0; p.onGround = false;
   renderStats();
 }
+// A make is worth 3 / 2 (outside / inside the arc); in one-on-one under OBL rules 2 / 1.
+const shotPoints = () => (ONE && RULES === 'obl' ? (shot.three ? 2 : 1) : (shot.three ? 3 : 2));
 function finishShot(made) {
   shot.done = true; shot.made = made;
   const who = shot.shooter ? shot.shooter.label : '';
   if (made) {
-    const pts = shot.three ? 3 : 2;
+    const pts = shotPoints();
     stats.pts[shot.team] += pts; stats.fgm++; if (shot.three) stats.tpm++;
     const kind = !shot.rim && !shot.board ? 'Swish' : shot.board ? 'Bank' : 'Rim in';
     callout(`${who} · ${kind} +${pts}`, false);
@@ -1429,7 +1627,7 @@ function finishShot(made) {
   stats.log.push({ made, three: shot.three, team: shot.team });
   emit('shot_result', {
     shot_id: shot.id, shooter: shot.shooter ? shot.shooter.id : null, team: TEAMS[shot.team].short, made, three: shot.three,
-    points: made ? (shot.three ? 3 : 2) : 0,
+    points: made ? shotPoints() : 0,
     kind: made ? (!shot.rim && !shot.board ? 'swish' : shot.board ? 'bank' : 'rim_in') : (!shot.rim && !shot.board ? 'airball' : 'miss'),
     rim_contact: shot.rim, board_contact: shot.board,
     score: { [TEAMS[0].short]: stats.pts[0], [TEAMS[1].short]: stats.pts[1] },
@@ -1530,6 +1728,7 @@ function clampCourt(p) {
 
 /* ---------- simulation step ---------- */
 function simStep(dt) {
+  if (ONE) return simStep1v1(dt);
   GM.simTime += dt;
   for (const p of players) p.actT += dt;
   const offTeam = GM.off;
@@ -1860,6 +2059,24 @@ const LAYOUTS = {
     gymCam('FR Narrow', -1, 0.166, 4.057, -0.023, 1, 6.477, 0.426, 30.2),
   ],
 };
+// 1v1 / 1v1oh: the one-on-one layouts recommended by gym-mv3dt's study (reports/layout_1v1.md on its branch
+// claude/layout-1v1-halfcourt), for the +x basket of the gym court: two cameras on the side walls level with the
+// free-throw line (5 m from half court), 6 m up; a third on the end wall 3.5 m to one side of the basket (beside the
+// backboard, not behind it), or (1v1oh) on the ceiling above the key; and a rim camera that frames only the rim.
+// Walls 2 m beyond the sidelines and 2.5 m beyond the end lines, as drawn with #court-gym. Fields of view are vertical
+// (the study's 80 and 110 degree horizontal lenses at 16:9).
+function fixedCam(name, pos, target, fov) {
+  return { name, pos: pos.map((v) => +v.toFixed(3)), target: target.map((v) => +v.toFixed(3)), fov, track: false, follow: false, subject: 'handler', res: [1920, 1080] };
+}
+const SIDE_Z = HALF_W + 1.95, END_X = HALF_L + 2.45;           // just inside the walls
+const RIM_CAM = fixedCam('Rim', [BB_X + 0.05, 5.2, 0], [RIMS[0].x, RIM_H, 0], 14);   // over the board's top edge
+LAYOUTS['1v1'] = [
+  fixedCam('Side +', [5.0, 6.0, -SIDE_Z], [7.0, 0, 3.0], 50.5),
+  fixedCam('Side -', [5.0, 6.0, SIDE_Z], [5.0, 0, -3.0], 50.5),
+  fixedCam('End wall', [END_X, 6.0, 3.5], [3.0, 0, 0], 50.5),
+  RIM_CAM,
+];
+LAYOUTS['1v1oh'] = [LAYOUTS['1v1'][0], LAYOUTS['1v1'][1], fixedCam('Ceiling', [5.6, 6.9, 0], [5.0, 0, 0], 77.6), RIM_CAM];
 const LAYOUT = (() => { const m = /cams-(\w+)/.exec(location.hash); return m && LAYOUTS[m[1]] ? m[1] : null; })();
 const DEFAULTS = LAYOUT ? LAYOUTS[LAYOUT] : [
   { name: 'Broadcast', pos: [0, 7.2, -18.5], target: [0, 1.2, 0], fov: 32, track: true, follow: false, subject: 'handler', res: [1280, 720] },
