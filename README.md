@@ -284,7 +284,7 @@ before. With it on:
   - 5v5: `throw_in` and a transition with `from: "out_of_bounds"`;
   - one-on-one: `possession` with `how: "out_of_bounds"`;
   - a deflected ball got back by its own team: `recover`.
-- **Rate:** at `#oob-1`, about one out of bounds every one to two minutes in 5v5, and more in one-on-one, where the
+- **Rate:** at `#oob-1`, about one out of bounds a minute in 5v5 (gym court), and more in one-on-one, where the
   lines are closer.
 
 ## Referee calls
