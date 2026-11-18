@@ -326,8 +326,11 @@ The two officials talk, as if each wore a mic. Every call an official would make
   same calls every time.
 - **Vocabulary:** `docs/ref_calls.json` holds all phrasings, team words, number words and timing; it is written from
   the page (`window.hoopframe.refVocabulary()`).
-- **Live:** the call shows as a caption at the top of the program view; `#ref-voice` also speaks it with the browser's
-  speech synthesis (live only, never recorded).
+- **Live:** the call shows as a caption at the top of the program view. **Speak referee calls** (Commentary tab) or
+  `#ref-voice` also speaks it with the browser's speech synthesis (live only, never recorded). Browsers speak only
+  after a click on the page, so use the switch.
+- **Game options in the page:** the Commentary tab's Game section sets one-on-one, the rule set and out of bounds and
+  restarts, for where the URL's `#` options do not reach the page (an embedded preview).
 - **Audio:** the mics' audio is rendered offline from a take's `ref_call` events, with gym noise, by
   `tools/ref_audio.py` (below).
 
