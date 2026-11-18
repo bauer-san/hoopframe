@@ -119,6 +119,7 @@ button { cursor: pointer; }
 }
 .ov-call.show { opacity: 1; transform: none; }
 .ov-call.miss { background: var(--panel-2); color: var(--fg); }
+.ov-ref { top: 44px; left: 50%; transform: translateX(-50%); font: 600 15px/1.3 var(--font-ui, sans-serif); background: rgba(0, 0, 0, .62); color: #fff; padding: 4px 10px; border-radius: 3px; white-space: nowrap; }
 .ov-sub {
   bottom: 52px; left: 50%; transform: translate(-50%, 6px); max-width: min(80%, 760px); text-align: center;
   font: 600 16px/1.35 var(--font-body); color: #fff; background: rgba(8,11,15,.82);
@@ -265,6 +266,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
         <div class="ov ov-bl"><span id="ov-spec">1280 × 720 · 16:9 · FOV 34°</span><span id="ov-disp">Display –</span></div>
         <div class="ov ov-call" id="ov-call"></div>
         <div class="ov ov-sub" id="ov-sub" aria-live="polite"></div>
+        <div class="ov ov-ref" id="ov-ref" hidden></div>
       </div>
       <div class="returns" id="returns">
         <button class="tile" type="button" data-cam="0"><span class="tile-badge">CAM 1</span><span class="tile-view"></span><span class="tile-meta"><b>Broadcast</b><span></span></span></button>
@@ -554,6 +556,12 @@ const SEED = (() => { const m = /seed-(\d+)/.exec(location.hash); return m ? (+m
 // one steal every two to three minutes for the two teams together; the rate scales the chance of each attempt.
 const STEALS = (() => { const m = /steals-(\d+(?:\.\d+)?)/.exec(location.hash); return m ? +m[1] : 1; })();
 const STEAL = { passReach: 1.0, passP: 0.02, stripReach: 1.25, stripRate: 0.012 }   // m, chance per try; m, chance per second;
+// #oob-<rate>: balls knocked or bounced out of bounds (0 = none, the default, as in the games before it). A defender's
+// deflected pass, a tipped rebound or (1v1) a strip knocked loose sends the ball toward the nearest line; any loose ball
+// that lands beyond a line (in 1v1 also beyond the half-court line) is out, and the team that did not touch it last
+// takes it: a throw-in from the spot (5v5), a check at the top (1v1).
+const OOB_RATE = (() => { const m = /oob-(\d+(?:\.\d+)?)/.exec(location.hash); return m ? +m[1] : 0; })();
+const OOBP = { passP: 0.05, tipP: 0.06, stripP: 0.3 };   // per defender in reach of a pass; per rebound; share of strips
 function mulberry32(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const rng = mulberry32(SEED);
 // Cosmetic randomness (floor planks, crowd, textures) has its own fixed seed: identical on every load, independent of the game seed.
@@ -1215,6 +1223,10 @@ const GM = { off: 0, handler: null, clear: true, decideT: 1, passes: 0, phase: '
 const BALL = { mode: 'held', holder: null, pos: new THREE.Vector3(), vel: new THREE.Vector3(), omega: new THREE.Vector3(), pass: null, stillT: 0, dribble: 0 };
 const shot = { active: false, done: true, made: false, rim: false, board: false, three: false, floor: false, team: 0, shooter: null };
 const stats = { pts: [0, 0], fgm: 0, fga: 0, tpm: 0, tpa: 0, log: [] };
+// out of bounds (#oob): last: the last player to touch the ball (the shooter, until someone else does); award: the team that takes it out
+// after a whistle (null in play); deflected: the ball knocked loose, not yet recovered; noCatchT: just after a
+// deflection, the deflecting hands cannot catch it again.
+const OOB = { last: null, kind: null, award: null, line: null, spot: new THREE.Vector3(), n: new THREE.Vector3(), deflected: false, noCatchT: 0 };
 
 const teamOf = (t) => players.filter((p) => p.team === t);
 const matchup = (p) => players.find((q) => q.team !== p.team && q.i === p.i);
@@ -1257,8 +1269,8 @@ function assignSpots(team) {
    defender may take the dribble (a strip, #steals-<rate>). A loose ball goes to the first player to reach it.
    The two officials work the half court as in 5v5 at the attacked basket (refTarget): the lead on the end line beyond
    it, the trail on the other sideline, level with or behind the ball (never past the top of the key).
-   Events: possession (how: check, clear, rebound, steal), dribble (n: the count in the possession), turnover (how:
-   fifth_dribble), and hoopframe's shot, shot_result, rebound, steal. */
+   Events: possession (how: check, clear, rebound, recover, out_of_bounds), dribble (n: the count in the possession),
+   turnover (how: fifth_dribble), and hoopframe's shot, shot_result, rebound, steal, deflection, out_of_bounds. */
 const O = { phase: 'check', t: 0, carry: false, attackT: 0, way: new THREE.Vector3(), wayT: 0, drib: 0, maxDrib: 4,
             holdT: 0, wasLow: false, hand: 1, steal: null, looseT: 0 };
 const TOP = new THREE.Vector3(RIMS[0].x - 7.3, 0, 0);
@@ -1273,18 +1285,20 @@ function newWay1v1At(r, a) {
   return O.way.set(clamp(RIMS[0].x - r * Math.cos(a), 0.8, HALF_L - 0.6), 0, clamp(r * Math.sin(a), -HALF_W + 0.8, HALF_W - 0.8));
 }
 // p has the ball; how: 'check' (a check at the top: the ball carried there), 'clear' (dribbled out past the arc),
-// 'rebound' (offensive: play on).
+// 'rebound' (offensive: play on), 'recover' (a deflected ball got back by the attacker: play on), 'out_of_bounds'
+// (a check at the top after the other player put it out).
 function possess1v1(p, how) {
-  const changed = p.team !== GM.off || how === 'check';
+  const changed = p.team !== GM.off || how === 'check' || how === 'out_of_bounds';
   if (shot.active && !shot.done) finishShot(false);
   BALL.mode = 'held'; BALL.holder = p; BALL.pass = null; GM.handler = p;
+  OOB.last = p; OOB.award = null; OOB.deflected = false;
   GM.off = p.team; setAttack(p.team);
   for (const q of players) if (q.action !== 'gather') q.action = 'none';
   O.drib = 0; O.wasLow = false; O.t = 0;
-  if (RULES === 'b') { O.maxDrib = rng() < 0.1 ? 5 : 4; O.holdT = how === 'rebound' ? 0 : rand(0.4, 1.5); }
+  if (RULES === 'b') { O.maxDrib = rng() < 0.1 ? 5 : 4; O.holdT = how === 'rebound' || how === 'recover' ? 0 : rand(0.4, 1.5); }
   if (changed) emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
-  if (how === 'rebound') { O.phase = 'attack'; O.attackT = rand(1.0, 4.0); O.wayT = 0; }
-  else { O.phase = 'check'; O.carry = RULES === 'b' || how === 'check'; }
+  if (how === 'rebound' || how === 'recover') { O.phase = 'attack'; O.attackT = rand(1.0, 4.0); O.wayT = 0; }
+  else { O.phase = 'check'; O.carry = RULES === 'b' || how === 'check' || how === 'out_of_bounds'; }
 }
 function setup1v1() {
   const a = players.find((p) => p.team === 0), d = defenderOf(a);
@@ -1331,8 +1345,11 @@ function simStep1v1(dt) {
     } else if ((RULES === 'a' && O.t > O.attackT) || (RULES === 'b' && O.drib >= O.maxDrib && O.maxDrib === 4 && !O.wasLow) || dist < 1.2) {
       O.phase = 'gather'; startShot(a);
     } else if (STEALS > 0 && d.onGround && distXZ(d.pos, a.pos) < STEAL.stripReach && rng() < STEAL.stripRate * STEALS * 2 * dt) {
-      O.steal = { t: 0, p0: BALL.pos.clone(), to: d, from: a };
-      BALL.mode = 'pass'; BALL.holder = null; O.phase = 'steal';
+      if (OOB_RATE > 0 && rng() < OOBP.stripP * OOB_RATE) deflect(d, 'strip');     // knocked loose, not caught
+      else {
+        O.steal = { t: 0, p0: BALL.pos.clone(), to: d, from: a };
+        BALL.mode = 'pass'; BALL.holder = null; O.phase = 'steal';
+      }
     }
   } else if (O.phase === 'gather') {
     a.speed = lerp(a.speed, 0, 1 - Math.exp(-14 * dt));
@@ -1340,15 +1357,22 @@ function simStep1v1(dt) {
     if (d.action === 'contest' && d.actT > 0 && d.onGround && d.actT < 0.1) { d.jumpV = 3.4; d.onGround = false; }
   } else if (O.phase === 'loose' || O.phase === 'flight') {
     O.looseT += dt;
-    const madeTo = shot.done && shot.made ? players.find((q) => q.team !== shot.team) : null;
+    const madeTo = OOB.award !== null ? players.find((q) => q.team === OOB.award)
+      : !OOB.deflected && shot.done && shot.made ? players.find((q) => q.team !== shot.team) : null;
     for (const p of players) {
       if (!p.onGround) { p.speed *= 1 - 2 * dt; continue; }
       const chase = O.phase === 'loose' && (!madeTo || p === madeTo);
       if (chase) moveToward(p, tC.set(BALL.pos.x, 0, BALL.pos.z), 5.6, dt, BALL.pos);
       else { const dir = tD.set(p.pos.x - RIM.x, 0, p.pos.z - RIM.z).normalize(); moveToward(p, tC.set(RIM.x + dir.x * 1.9, 0, RIM.z + dir.z * 1.9), 3.5, dt, BALL.pos); }
       const reach = 2.25 * p.s + p.jumpY;
-      if (chase && distXZ(p.pos, BALL.pos) < 0.65 && BALL.pos.y < reach) {
+      if (chase && distXZ(p.pos, BALL.pos) < 0.65 && BALL.pos.y < reach && OOB.noCatchT <= 0) {
+        if (OOB.award !== null) { possess1v1(p, 'out_of_bounds'); break; }
+        if (OOB.deflected) { possess1v1(p, p.team === GM.off ? 'recover' : (RULES === 'b' ? 'check' : 'clear')); break; }
         if (madeTo) { possess1v1(p, 'check'); break; }
+        if (OOB_RATE > 0 && rng() < OOBP.tipP * OOB_RATE) {                  // the rebound tipped, maybe out
+          if (shot.active && !shot.done) finishShot(false);
+          deflect(p, 'tip'); break;
+        }
         const offensive = p.team === shot.team;
         if (shot.active && !shot.done) finishShot(false);   // caught before it reached the floor: a miss
         emit('rebound', { player: p.id, team: TEAMS[p.team].short, offensive, shot_id: shot.id });
@@ -1361,8 +1385,8 @@ function simStep1v1(dt) {
       }
     }
     if (O.looseT > 8 && BALL.mode === 'free') {    // out of reach: the nearest player takes it, checked
-      const p = players.reduce((x, y) => (distXZ(x.pos, BALL.pos) <= distXZ(y.pos, BALL.pos) ? x : y));
-      possess1v1(p, 'check');
+      const p = OOB.award !== null ? players.find((q) => q.team === OOB.award) : players.reduce((x, y) => (distXZ(x.pos, BALL.pos) <= distXZ(y.pos, BALL.pos) ? x : y));
+      possess1v1(p, OOB.award !== null ? 'out_of_bounds' : 'check');
     }
   } else if (O.phase === 'steal') {
     guard(0.0);
@@ -1418,7 +1442,9 @@ function simStep1v1(dt) {
     const w = BALL.omega.length();
     if (w > 1e-4) ballMesh.rotateOnWorldAxis(tB.copy(BALL.omega).multiplyScalar(1 / w), w * dt);
     if (O.phase === 'flight' && (shot.done || shot.rim || shot.board)) O.phase = 'loose';
+    if (OOB_RATE > 0 && O.phase === 'loose' && OOB.award === null && !(shot.done && shot.made && !OOB.deflected)) { const line = outLine(); if (line) whistleOut(line); }
   }
+  OOB.noCatchT = Math.max(0, OOB.noCatchT - dt);
   for (const p of players) clampCourt(p);
   moveRefs(dt);
   for (const p of bodies) p.stride += dt * (2 + p.speed * 1.9);
@@ -1432,6 +1458,166 @@ function simStep1v1(dt) {
     }
   }
   commentaryTick();
+  refTick();
+}
+
+/* =========================================================
+   Referee calls: what each official says into their mic
+   =========================================================
+   Every game event an official would call becomes a ref_call event: who says it, when (t0..t1, game time; the
+   whistle first for a stoppage), the words, and what they mean (intent). The phrasing varies like real officials do
+   (several phrasings per call, team by colour or name, numbers said either way, a repeated or dropped word, a filler),
+   and the officials also say things that are not calls (chatter, near-misses), which a keyword spotter must ignore.
+   The words are drawn from their own seeded stream, so adding calls does not change the game. REF_VOCAB is the one
+   source of truth for the vocabulary (docs/ref_calls.json is written from it). The audio is rendered offline from the
+   ref_call events by tools/ref_audio.py. #ref-voice speaks the calls live (speech synthesis, never recorded). */
+const REF_VOCAB = {
+  version: 1,
+  teams: { HAR: ['red', 'Harbor'], MSA: ['white', 'Mesa'] },
+  lines: { sideline: ['sideline', 'side'], end_line: ['baseline', 'end line'], half_court: ['top', 'half court'] },
+  values: { 1: 'one', 2: 'two', 3: 'three' },
+  // {team}: the team the call is for; {other}: the other team; {value}: points; {number}: a player's number;
+  // {line}: where it went out; {hi} {lo}: the score, the leader's first; {tie}: the tied score
+  intents: {
+    made_basket: { whistle: false, said: 0.85, phrases: [['count it', 3], ['good, {value}', 3], ["that's {value}", 2], ['{value}, count it', 2], ['bucket, {value}', 1], ['good basket {team}', 1], ['{value} points {team}', 1], ['good', 1]] },
+    out_of_bounds: { whistle: true, said: 1.0, phrases: [['{team} ball', 4], ['out of bounds, {team} ball', 3], ['out, {team} ball', 3], ['{team} ball, {line}', 2], ['off {other}, {team} ball', 2], ['off {other} {number}, {team} ball', 1], ['out on {other}', 1], ['ball goes {team}', 1]] },
+    play_on: { whistle: false, said: 0.5, phrases: [['play on', 3], ['live ball', 3], ["it's live", 1], ['keep playing', 1]] },
+    check: { whistle: false, said: 0.6, phrases: [['check', 3], ['check it up', 2], ['check ball', 1], ["ball's in", 1]] },
+    fifth_dribble: { whistle: true, said: 1.0, phrases: [['five, turnover', 3], ["that's five, {team} ball", 2], ['fifth dribble, turnover', 2], ['five dribbles, {team} ball', 1], ['turnover, five', 1]] },
+    steal_turnover: { whistle: true, said: 0.9, phrases: [['steal, {team} ball', 3], ['turnover, {team} ball, check it up', 2], ['swipe, {team} ball', 1], ['{team} ball, check it', 1]] },
+    score: { whistle: false, said: 0.7, phrases: [['{hi} {lo}, {team}', 3], ['{team} {hi} {lo}', 2], ['{hi} to {lo}', 1]], tie: [['{tie} all', 3], ['tied at {tie}', 1]] },
+  },
+  chatter: ['watch the hands', 'talk to me', "let's go", 'nice and clean', 'keep it moving', 'I got the line', "I've got it", 'nothing there', 'good no call', 'stay down', 'easy now', 'hands off', 'watch your feet', 'he got ball'],
+  near_miss: ['red bench, sit down', 'white coach, stay in the box', 'no, play through that', 'clean ball', 'good defense', 'out of my way'],
+  slips: { filler: ['uh', 'um', 'yeah'], p_filler: 0.06, p_repeat: 0.05, p_drop: 0.03 },
+  timing: { delay: [0.3, 1.5], whistle_to_speech: [0.4, 1.0], echo: 0.25, echo_after: [0.3, 0.8], chatter_per_s: 0.05 },
+  rate_wps: { 'REF-1': 2.8, 'REF-2': 3.3 },
+};
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+// a number as said: "twenty-three", or as officials say a jersey, digit by digit ("two-three")
+function sayNumber(n, digits = false) {
+  if (n < 20 && !(digits && n >= 10)) return ONES[n];
+  if (digits) return `${ONES[Math.floor(n / 10)]}-${ONES[n % 10]}`;
+  return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10]}` : '');
+}
+const REFC = { rng: mulberry32(SEED ^ 0x7ef5), queue: [], busyUntil: {}, nextChat: {}, shown: 0, voice: /(^#|&)ref-voice(&|$)/.test(location.hash) };
+const rcRand = (a, b) => a + REFC.rng() * (b - a);
+const rcPick = (a) => a[(REFC.rng() * a.length) | 0];
+function rcWeighted(list) {
+  let w = list.reduce((x, y) => x + y[1], 0) * REFC.rng();
+  for (const [v, k] of list) { w -= k; if (w <= 0) return v; }
+  return list[list.length - 1][0];
+}
+const rcTeamWord = (short) => (REFC.rng() < 0.7 ? REF_VOCAB.teams[short][0] : REF_VOCAB.teams[short][1]);
+// fill a phrase's slots; drop phrasings whose slots are not known
+function rcFill(phrases, slots) {
+  const ok = phrases.filter(([ph]) => [...ph.matchAll(/\{(\w+)\}/g)].every((m) => slots[m[1]] !== undefined));
+  if (!ok.length) return null;
+  return rcWeighted(ok).replace(/\{(\w+)\}/g, (_, k) => slots[k]);
+}
+// natural slips: a filler word, a repeated word, a dropped word (never the only word)
+function rcSlip(text) {
+  const S = REF_VOCAB.slips, w = text.split(' ');
+  if (REFC.rng() < S.p_filler) w.splice((REFC.rng() * w.length) | 0, 0, rcPick(S.filler) + ',');
+  if (REFC.rng() < S.p_repeat) { const k = (REFC.rng() * w.length) | 0; w.splice(k, 0, w[k].replace(/[,.]$/, '')); }
+  if (w.length > 2 && REFC.rng() < S.p_drop) w.splice(1 + ((REFC.rng() * (w.length - 1)) | 0), 1);
+  return w.join(' ');
+}
+// which official calls it: on a sideline, the one on that side; else the lead (end line) or the trail (the ball)
+function rcCaller(kind, z) {
+  if (kind === 'side' && z !== undefined) return refs.find((r) => r.side === Math.sign(z || 1)) || refs[0];
+  if (kind === 'lead') return refs.find((r) => r.role === 'lead') || refs[0];
+  if (kind === 'trail') return refs.find((r) => r.role === 'trail') || refs[0];
+  return refs.reduce((a, b) => (distXZ(a.pos, BALL.pos) <= distXZ(b.pos, BALL.pos) ? a : b));
+}
+// schedule a call: intent {type, team, ...}; slots fill its words
+function rcCall(ref, intent, slots, opts = {}) {
+  const V = REF_VOCAB.intents[intent.type], T = REF_VOCAB.timing;
+  if (!opts.echo && REFC.rng() > V.said) return;
+  let text = opts.text || (intent.type === 'score' && slots.tie !== undefined ? rcFill(V.tie, slots) : rcFill(V.phrases, slots));
+  if (!text) return;
+  text = rcSlip(text);
+  const now = GM.simTime;
+  const whistle = V.whistle && !opts.echo ? now + rcRand(0.15, 0.4) : null;
+  let t0 = whistle !== null ? whistle + rcRand(...T.whistle_to_speech) : now + (opts.after || rcRand(...T.delay));
+  t0 = Math.max(t0, REFC.busyUntil[ref.id] || 0);
+  const words = text.replace(/[,.]/g, '').split(/\s+/).filter(Boolean);
+  const t1 = t0 + 0.2 + words.length / REF_VOCAB.rate_wps[ref.id];
+  REFC.busyUntil[ref.id] = t1 + 0.2;
+  REFC.queue.push({ at: whistle !== null ? whistle : t0, ref: ref.id, t0: r4(t0), t1: r4(t1), whistle: whistle === null ? null : r4(whistle), text, words, intent, echo: !!opts.echo, chatter: !!opts.chatter });
+  if (!opts.echo && !opts.chatter && ['made_basket', 'out_of_bounds'].includes(intent.type) && REFC.rng() < T.echo) {
+    const other = refs.find((r) => r !== ref);
+    if (other) {
+      const short = intent.type === 'out_of_bounds' ? `${rcTeamWord(intent.team)} ball` : rcPick(['yep', 'good', 'count it']);
+      const at = t1 + rcRand(...T.echo_after);
+      const w = short.split(' ');
+      REFC.queue.push({ at, ref: other.id, t0: r4(at), t1: r4(at + 0.2 + w.length / REF_VOCAB.rate_wps[other.id]), whistle: null, text: short, words: w, intent: short.includes('ball') || short === 'count it' ? intent : { type: 'chatter' }, echo: true, chatter: false });
+    }
+  }
+}
+// game events -> calls
+function refHear(e) {
+  if (!refs.length || e.type === 'ref_call') return;
+  const team = (short) => ({ team: short });
+  const other = (short) => TEAMS.find((t) => t.short !== short).short;
+  if (e.type === 'shot_result' && e.made) {
+    const slots = { value: REF_VOCAB.values[e.points], team: rcTeamWord(e.team) };
+    rcCall(rcCaller(REFC.rng() < 0.6 ? 'trail' : 'lead'), { type: 'made_basket', team: e.team, value: e.points }, slots);
+    if (ONE) {
+      const [a, b] = Object.values(e.score), lead = a >= b ? Object.keys(e.score)[0] : Object.keys(e.score)[1];
+      const sc = (n) => (n === 0 ? rcPick(['nothing', 'zero', 'zip']) : sayNumber(n));
+      const sl = a === b ? { tie: sc(a) } : { hi: sc(Math.max(a, b)), lo: sc(Math.min(a, b)), team: rcTeamWord(lead) };
+      rcCall(rcCaller('trail'), { type: 'score', team: a === b ? null : lead, score: e.score }, sl, { after: rcRand(1.8, 3.0) });
+    }
+  } else if (e.type === 'out_of_bounds') {
+    const ot = other(e.team), last = players.find((p) => p.id === e.last_touch);
+    const slots = { team: rcTeamWord(e.team), other: rcTeamWord(ot), line: rcPick(REF_VOCAB.lines[e.line]), ...(last ? { number: sayNumber(last.num, REFC.rng() < 0.6) } : {}) };
+    rcCall(e.line === 'sideline' ? rcCaller('side', e.spot[1]) : e.line === 'end_line' ? rcCaller('lead') : rcCaller('trail'), { type: 'out_of_bounds', team: e.team, line: e.line, number: last ? last.num : null }, slots);
+  } else if (e.type === 'turnover' && e.how === 'fifth_dribble') {
+    rcCall(rcCaller('trail'), { type: 'fifth_dribble', team: other(e.team) }, { team: rcTeamWord(other(e.team)) });
+  } else if (e.type === 'steal') {
+    if (ONE && RULES === 'b') rcCall(rcCaller('ball'), { type: 'steal_turnover', team: e.team }, { team: rcTeamWord(e.team) });
+    else rcCall(rcCaller('ball'), { type: 'play_on', team: null }, {});
+  } else if (e.type === 'possession' && e.how === 'recover') {
+    rcCall(rcCaller('ball'), { type: 'play_on', team: null }, {});
+  } else if (ONE && e.type === 'possession' && (e.how === 'check' || e.how === 'out_of_bounds')) {
+    rcCall(rcCaller('trail'), { type: 'check', team: e.team }, team(e.team), { after: rcRand(1.5, 3.5) });
+  }
+}
+// due calls -> ref_call events; chatter while the ball is live
+function refTick() {
+  if (!refs.length) return;
+  const now = GM.simTime, T = REF_VOCAB.timing;
+  for (const r of refs) {
+    if (REFC.nextChat[r.id] === undefined) REFC.nextChat[r.id] = now - Math.log(1 - REFC.rng()) / T.chatter_per_s;
+    if (now >= REFC.nextChat[r.id]) {
+      REFC.nextChat[r.id] = now - Math.log(1 - REFC.rng()) / T.chatter_per_s;
+      if (now >= (REFC.busyUntil[r.id] || 0)) {
+        const near = REFC.rng() < 0.2, text = rcPick(near ? REF_VOCAB.near_miss : REF_VOCAB.chatter), words = text.replace(/[,.]/g, '').split(' ');
+        const t1 = now + 0.2 + words.length / REF_VOCAB.rate_wps[r.id];
+        REFC.busyUntil[r.id] = t1 + 0.2;
+        REFC.queue.push({ at: now, ref: r.id, t0: r4(now), t1: r4(t1), whistle: null, text, words, intent: { type: 'chatter' }, echo: false, chatter: true, near_miss: near });
+      }
+    }
+  }
+  if (!REFC.queue.length) return;
+  REFC.queue.sort((a, b) => a.at - b.at);
+  while (REFC.queue.length && REFC.queue[0].at <= now + 1e-9) {
+    const c = REFC.queue.shift(); delete c.at;
+    emit('ref_call', c);
+    refShow(c);
+  }
+}
+function refShow(c) {
+  const el = $('ov-ref');
+  if (!el) return;
+  el.hidden = false; el.textContent = `${c.ref === 'REF-1' ? 'Ref 1' : 'Ref 2'}: ${c.whistle !== null ? '(whistle) ' : ''}${c.text}`;
+  clearTimeout(REFC.shown); REFC.shown = setTimeout(() => { el.hidden = true; }, 2200);
+  if (REFC.voice && window.speechSynthesis && speed === 1 && !REC.active && !paused) {
+    const u = new SpeechSynthesisUtterance(c.text); u.rate = c.ref === 'REF-1' ? 1.0 : 1.15; u.pitch = c.ref === 'REF-1' ? 0.8 : 1.05;
+    speechSynthesis.speak(u);
+  }
 }
 
 // tip-off positions
@@ -1484,8 +1670,54 @@ function startSteal(by, from, kind) {
   for (const q of players) if (q.action === 'receive') q.action = 'none';
   by.action = 'receive'; by.actT = 0;
 }
+/* ---------- out of bounds (#oob-<rate>) ---------- */
+// The ball knocked toward the nearest line (the half-court line counts in 1v1), loose.
+function deflect(by, kind) {
+  const x = BALL.pos.x, z = BALL.pos.z;
+  const lines = [[1, 0, HALF_L - x], [0, 1, HALF_W - z], [0, -1, HALF_W + z], [-1, 0, ONE ? x : HALF_L + x]];
+  const [nx, nz] = lines.reduce((a, b) => (a[2] <= b[2] ? a : b));
+  const ang = Math.atan2(nz, nx) + rand(-0.6, 0.6), sp = rand(4.5, 7.5);
+  BALL.vel.set(Math.cos(ang) * sp, rand(0.8, 2.6), Math.sin(ang) * sp);
+  BALL.omega.crossVectors(UP, BALL.vel).multiplyScalar(1 / BALL_R);
+  BALL.pos.y = Math.max(BALL.pos.y, 0.5);
+  BALL.mode = 'free'; BALL.holder = null; BALL.pass = null;
+  OOB.last = by; OOB.kind = kind; OOB.deflected = true; OOB.noCatchT = 0.35;
+  for (const q of players) if (q.action === 'receive' || q.action === 'catch') q.action = 'none';
+  emit('deflection', { player: by.id, team: TEAMS[by.team].short, kind });
+  callout(`${by.label} · ${kind === 'tip' ? 'Tipped' : 'Deflected'}`, true);
+  if (ONE) { O.phase = 'loose'; O.looseT = 0; O.steal = null; return; }
+  GM.handler = null; GM.driving = false;
+  endTransition('deflection');
+  GM.phase = 'loose'; GM.looseT = 0; GM.allow = [0, 1];
+}
+// the line the loose ball is out over, or null: out when it lands beyond the line, or is well beyond it and low
+function outLine() {
+  const x = BALL.pos.x, z = BALL.pos.z, low = BALL.pos.y < BALL_R + 0.03, far = BALL.pos.y < 2.0;
+  const past = (d) => d > 0 && (low || (far && d > 1.0));
+  if (past(Math.abs(z) - HALF_W)) return 'sideline';
+  if (past(Math.abs(x) - HALF_L)) return 'end_line';
+  if (ONE && past(-x)) return 'half_court';
+  return null;
+}
+function whistleOut(line) {
+  const award = OOB.last ? 1 - OOB.last.team : 1 - GM.off;
+  OOB.award = award; OOB.line = line; OOB.deflected = false;
+  OOB.spot.set(clamp(BALL.pos.x, ONE ? 0 : -HALF_L, HALF_L), 0, clamp(BALL.pos.z, -HALF_W, HALF_W));
+  if (line === 'sideline') OOB.n.set(0, 0, Math.sign(BALL.pos.z)); else OOB.n.set(line === 'half_court' ? -1 : Math.sign(BALL.pos.x), 0, 0);
+  emit('out_of_bounds', { line, spot: [r4(OOB.spot.x), r4(OOB.spot.z)], last_touch: OOB.last ? OOB.last.id : null, team: TEAMS[award].short, kind: OOB.kind || 'loose' });
+  callout(`Out of bounds · ${TEAMS[award].name} ball`, true);
+  OOB.kind = null;
+  if (ONE) { O.looseT = 0; return; }
+  GM.allow = [award]; GM.looseT = 0;
+}
+// 5v5: the awarded team's player who reached the ball takes it out from the spot
+function throwIn(p) {
+  OOB.award = null;
+  giveBall(p, p.team !== GM.off, 'throw_in');
+}
 function giveBall(p, changed, how = 'catch') {
   const prevTeam = GM.off;
+  OOB.last = p;
   // a rebound caught off the rim/board before the ball reaches the floor still ends the shot as a miss
   if (shot.active && !shot.done && BALL.mode === 'free') finishShot(false);
   GM.off = p.team; GM.handler = p;
@@ -1505,7 +1737,7 @@ function giveBall(p, changed, how = 'catch') {
   }
   emit(how, { player: p.id, team: TEAMS[p.team].short, ...(how === 'rebound' ? { offensive: p.team === shot.team, shot_id: shot.id } : {}), ...(how === 'steal' ? stealInfo : {}) });
   if (changed || p.team !== prevTeam || how === 'tipoff') emit('possession', { team: TEAMS[p.team].short, player: p.id, how });
-  if (changed && (how === 'inbound' || distXZ(p.pos, RIM) > 11)) startTransition(p, how);
+  if ((changed && (how === 'inbound' || distXZ(p.pos, RIM) > 11)) || how === 'throw_in') startTransition(p, how);
 }
 
 /* ---------- transition ---------- */
@@ -1515,10 +1747,16 @@ function giveBall(p, changed, how = 'catch') {
 // the handler attacks the rim; a teammate who has beaten their defender down the floor gets the ball ahead.
 function startTransition(p, how) {
   const T = GM.trans;
-  Object.assign(T, { active: true, t: 0, team: p.team, from: how === 'inbound' ? 'made_basket' : how === 'rebound' ? 'defensive_rebound' : how, recv: null, inbounder: null, breakT: 0.6 });
+  Object.assign(T, { active: true, t: 0, team: p.team, from: how === 'inbound' ? 'made_basket' : how === 'rebound' ? 'defensive_rebound' : how === 'throw_in' ? 'out_of_bounds' : how, recv: null, inbounder: null, breakT: 0.6 });
   const mates = teamOf(p.team).filter((q) => q !== p);
   const nearest = (pt) => mates.reduce((a, b) => (distXZ(a.pos, pt) <= distXZ(b.pos, pt) ? a : b));
-  if (how === 'inbound') {
+  if (how === 'throw_in') {                          // from the spot where it went out, to a teammate 3 m in
+    const n = OOB.n, s = OOB.spot, along = rand(-1.6, 1.6);
+    T.inbounder = p;
+    T.inSpot.set(s.x + n.x * 0.45, 0, s.z + n.z * 0.45);
+    T.recvSpot.set(clamp(s.x - n.x * 3.0 + n.z * along, -HALF_L + 1, HALF_L - 1), 0, clamp(s.z - n.z * 3.0 + n.x * along, -HALF_W + 1, HALF_W - 1));
+    T.recv = nearest(T.recvSpot);
+  } else if (how === 'inbound') {
     const side = rng() < 0.5 ? 1 : -1;
     T.inbounder = p;
     T.inSpot.set(-GM.dir * (HALF_L + 0.45), 0, side * 1.4);
@@ -1602,7 +1840,7 @@ function release(p) {
   const t = d < 2.5 ? 0.62 : 0.78 + 0.072 * d;
   BALL.vel.set((target.x - p0.x) / t, (target.y - p0.y + 0.5 * G * t * t) / t, (target.z - p0.z) / t);
   BALL.omega.crossVectors(tB.set(BALL.vel.x, 0, BALL.vel.z).normalize(), UP).multiplyScalar(12);
-  BALL.mode = 'free'; BALL.holder = null;
+  BALL.mode = 'free'; BALL.holder = null; OOB.last = p;
   Object.assign(shot, { active: true, done: false, made: false, rim: false, board: false, floor: false, three: isThree(p.pos), team: p.team, shooter: p });
   shot.id = ++shotSeq;
   emit('shot', { shot_id: shot.id, shooter: p.id, team: TEAMS[p.team].short, number: p.num, floor_pos: [r4(p.pos.x), r4(p.pos.z)], release: [r4(p0.x), r4(p0.y), r4(p0.z)], distance: r4(Math.hypot(RIM.x - p.pos.x, p.pos.z)), three: shot.three, contested });
@@ -1794,12 +2032,13 @@ function simStep(dt) {
     if (tB.lengthSq() > 1e-6) ballMesh.rotateOnWorldAxis(tB.normalize().cross(UP), -dt * 14);
     if (u >= 1) {
       if (ps.steal) { giveBall(ps.to, true, 'steal'); callout(`${ps.to.label} · Steal`, true); } else { GM.passes++; giveBall(ps.to, false, 'catch'); }
-    } else if (STEALS > 0 && !ps.steal && u > 0.2 && u < 0.9 && BALL.pos.y < 2.1) {
-      // a defender the ball passes within reach of gets one try at it
+    } else if ((STEALS > 0 || OOB_RATE > 0) && !ps.steal && u > 0.2 && u < 0.9 && BALL.pos.y < 2.1) {
+      // a defender the ball passes within reach of gets one try at it: an interception, or (#oob) a deflection
       for (const q of teamOf(1 - ps.from.team)) {
         if (ps.tried.has(q) || !q.onGround || distXZ(q.pos, BALL.pos) > STEAL.passReach) continue;
         ps.tried.add(q);
-        if (rng() < STEAL.passP * STEALS) { startSteal(q, ps.from, 'interception'); break; }
+        if (STEALS > 0 && rng() < STEAL.passP * STEALS) { startSteal(q, ps.from, 'interception'); break; }
+        if (OOB_RATE > 0 && rng() < OOBP.passP * OOB_RATE) { deflect(q, 'deflection'); break; }
       }
     }
   } else {
@@ -1810,7 +2049,9 @@ function simStep(dt) {
     const w = BALL.omega.length();
     if (w > 1e-4) ballMesh.rotateOnWorldAxis(tB.copy(BALL.omega).multiplyScalar(1 / w), w * dt);
     if (GM.phase === 'shot' && (shot.done || shot.rim || shot.board)) { GM.phase = 'loose'; GM.looseT = 0; if (!shot.done) GM.allow = [0, 1]; }
+    if (OOB_RATE > 0 && GM.phase === 'loose' && OOB.award === null && !(shot.done && shot.made && !OOB.deflected)) { const line = outLine(); if (line) whistleOut(line); }
   }
+  OOB.noCatchT = Math.max(0, OOB.noCatchT - dt);
 
   // ---- players ----
   const chasers = new Set();
@@ -1824,7 +2065,9 @@ function simStep(dt) {
     if (GM.looseT > 9) {                               // ball out of reach: hand it to the nearest allowed player
       const p = [...chasers][0];
       local(p, 0, 1.25, 0.38, BALL.pos);
-      giveBall(p, p.team !== shot.team || shot.made, 'recover');
+      if (OOB.award !== null) throwIn(p);
+      else if (OOB.deflected) { OOB.deflected = false; giveBall(p, p.team !== GM.off, 'recover'); }
+      else giveBall(p, p.team !== shot.team || shot.made, 'recover');
     }
   }
   // crashers: two offensive players nearest the rim go for the rebound after a shot
@@ -1853,8 +2096,14 @@ function simStep(dt) {
     if (GM.phase === 'loose' && chasers.has(p) && BALL.mode === 'free') {
       const d = distXZ(p.pos, BALL.pos);
       const reach = 2.25 * p.s + p.jumpY;
-      if (d < 0.65 && BALL.pos.y < reach) {
+      if (d < 0.65 && BALL.pos.y < reach && OOB.noCatchT <= 0) {
+        if (OOB.award !== null) { throwIn(p); continue; }
+        if (OOB.deflected) { OOB.deflected = false; giveBall(p, p.team !== GM.off, 'recover'); continue; }
         const wasMade = shot.made;
+        if (!wasMade && OOB_RATE > 0 && rng() < OOBP.tipP * OOB_RATE) {   // the rebound tipped, maybe out
+          if (shot.active && !shot.done) finishShot(false);
+          deflect(p, 'tip'); continue;
+        }
         giveBall(p, p.team !== shot.team || wasMade, wasMade ? 'inbound' : 'rebound');
         if (!wasMade) callout(`${p.label} · ${p.team === shot.team ? 'Off. rebound' : 'Rebound'}`, p.team !== shot.team);
         continue;
@@ -1958,6 +2207,7 @@ function simStep(dt) {
     }
   }
   commentaryTick();                                  // tracker-view commentary, at 30 Hz of game time
+  refTick();
 }
 
 /* =========================================================
@@ -2472,6 +2722,7 @@ function emit(type, data) {
   if (eventLog) eventLog.push(e);
   cmGround(e);
   mqttPub('events', e, 1);
+  refHear(e);
 }
 function playerState(p) {
   p.rig.root.updateMatrixWorld(true);
@@ -2865,6 +3116,8 @@ function manifest(frames, videoNames) {
     keypoint_visibility: { 0: 'behind the camera', 1: 'in front of the camera but outside the image', 2: 'inside the image (self-occlusion not tested)' },
     occlusion: 'Fraction of head, pelvis and both knees hidden from the camera by other players\' and referees\' bodies. Hoop, stanchion and crowd are not tested.',
     referees: refs.map((r) => ({ id: r.id, track: r.idx, side: r.side < 0 ? '-z' : '+z', height_m: r4(1.98 * r.s) })),
+    ref_mics: { calls: 'ref_call events in events.jsonl', vocabulary_version: REF_VOCAB.version, audio: 'rendered offline: tools/ref_audio.py' },
+    out_of_bounds_rate: OOB_RATE,
     teams: TEAMS.map((t, ti) => ({ name: t.name, short: t.short, players: teamOf(ti).map((p) => ({ id: p.id, track: p.idx, number: p.num, height_m: r4(1.98 * p.s) })) })),
     cameras: REC.tracks.map((t, k) => ({ id: t.cam + 1, name: cams[t.cam].name, file: videoNames[k], width: t.w, height: t.h, codec: t.codec })),
     files: { groundtruth: 'groundtruth.jsonl', events: 'events.jsonl' },
@@ -3606,6 +3859,7 @@ window.hoopframe = {
   },
   pose() { return players.map(playerState); },
   referees() { return refs.map(refState); },
+  refVocabulary() { return JSON.parse(JSON.stringify(REF_VOCAB)); },   // docs/ref_calls.json
   snapshot(withAnnotations = true) { return snapshot(Math.floor(GM.simTime * MQ.rate), withAnnotations); },   // a groundtruth.jsonl line for now
   events() { const out = eventLog || []; eventLog = []; return out; },   // events since the last call (first call starts logging)
   commentary() {                                       // the Commentary tab's detected events, lines and scorecard

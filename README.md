@@ -262,6 +262,75 @@ with `how: "steal"`.
 minutes for the two teams together. `#steals-0` turns steals off, and a seed then replays the game it gave before
 steals existed; with steals on, the same seed gives a different game.
 
+## Out of bounds
+
+`#oob-<rate>` adds balls going out of bounds; it is off by default (`#oob-0`), so a seed replays the same game as
+before. With it on:
+
+- **How the ball goes out:**
+  - A defender within reach of a pass may deflect it instead of intercepting it.
+  - A rebound may be tipped instead of caught.
+  - In one-on-one, a strip may knock the ball loose instead of into the defender's hands.
+  - A deflected ball heads for the nearest line.
+- **When it is out:** a loose ball that lands beyond a sideline or end line is out, as is one well beyond the line and
+  low. In one-on-one, the half-court line also counts. A made basket's ball is never called out.
+- **Who gets it:** the team that did not touch it last; the shooter counts as the last touch of a missed shot.
+  - 5v5: one of their players gets the ball and throws it in from the spot to a teammate 3 m inside.
+  - One-on-one: a check at the top.
+- **Events:**
+  - `deflection` (`player`, `team`, `kind`: `deflection`, `tip`, `strip`);
+  - `out_of_bounds` (`line`: `sideline`, `end_line`, `half_court`; `spot` [x, z]; `last_touch`; `team`: the team
+    that gets the ball; `kind`: what sent it out, `loose` when untouched);
+  - 5v5: `throw_in` and a transition with `from: "out_of_bounds"`;
+  - one-on-one: `possession` with `how: "out_of_bounds"`;
+  - a deflected ball got back by its own team: `recover`.
+- **Rate:** at `#oob-1`, about one out of bounds every one to two minutes in 5v5, and more in one-on-one, where the
+  lines are closer.
+
+## Referee calls
+
+The two officials talk, as if each wore a mic. Every call an official would make becomes a `ref_call` event:
+
+- **Who and when:** `ref`; `whistle` (the time of the whistle, for a stoppage, else null); `t0`, `t1` (the speech,
+  game time).
+- **What was said:** `text`, `words`.
+- **What it means:** `intent`, with `type` and, where they apply, `team`, `value`, `line`, `number`, `score`.
+- **Flags:** `echo`, the other official repeating the call; `chatter`, not a call.
+
+| Intent | When | Said, for example |
+|---|---|---|
+| `made_basket` | a make (most of them) | "count it", "good, two", "that's three", "good basket red" |
+| `out_of_bounds` | whistle, then the team that gets the ball | "white ball", "out, red ball", "red ball, sideline", "off white two-three, red ball" |
+| `play_on` | a steal in 5v5, a deflected ball recovered | "play on", "live ball" |
+| `check` | one-on-one: a check | "check", "check it up", "ball's in" |
+| `score` | one-on-one: after a make | "six four, red", "white five three", "four all" |
+| `fifth_dribble` | rule set B: whistle | "five, turnover", "that's five, white ball" |
+| `steal_turnover` | rule set B: whistle | "steal, red ball", "turnover, white ball, check it up" |
+
+- **Variation:**
+  - Each call has several phrasings.
+  - Teams are said by colour (red = HARBOR, white = MESA) or by name.
+  - Numbers are said as words or digit by digit ("twenty-three", "two-three").
+  - About one call in twenty has a filler word, a repeated word or a dropped word.
+- **Not calls:** the officials also say things that are not calls ("watch the hands", "talk to me") and near-misses
+  ("red bench, sit down"), each with `intent.type: "chatter"`.
+- **Who calls what:**
+  - a sideline out: the official on that side;
+  - an end-line out: the lead;
+  - checks, scores and dribble counts: the trail;
+  - the rest: the official nearer the ball.
+- **Timing:**
+  - A call starts 0.3 to 1.5 s after the play, or 0.4 to 1.0 s after its whistle.
+  - Each official speaks at their own rate (2.8 and 3.3 words per second), and never over themselves.
+- **Determinism:** the calls come from their own seeded random stream, so they do not change the game; a seed gives the
+  same calls every time.
+- **Vocabulary:** `docs/ref_calls.json` holds all phrasings, team words, number words and timing; it is written from
+  the page (`window.hoopframe.refVocabulary()`).
+- **Live:** the call shows as a caption at the top of the program view; `#ref-voice` also speaks it with the browser's
+  speech synthesis (live only, never recorded).
+- **Audio:** the mics' audio is rendered offline from a take's `ref_call` events, with gym noise, by
+  `tools/ref_audio.py`.
+
 ## Gym court and camera layout
 
 Two URL options, combined with `&` (and a seed: `#seed-123&court-gym&cams-gym`):
@@ -358,11 +427,12 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   rendered (see [Shutter and motion blur](#shutter-and-motion-blur)), but there is no lens distortion,
   rolling shutter or sensor noise, so expect a domain gap against real broadcast footage. The per-frame
   calibration and labels let you add those effects in post-processing.
-- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `snapshot()`, `events()`, `commentary()` and `profile()`
+- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `refVocabulary()`, `snapshot()`, `events()`, `commentary()` and `profile()`
   are test hooks for fast-forwarding, inspecting and timing the simulation. `snapshot()` returns the current
   ground-truth line. `events()` returns the events since its previous call; the first call starts the log.
   They do not render or record.
-- There are no fouls, free throws, out-of-bounds turnovers, shot clock or periods. Play runs continuously.
+- There are no fouls, free throws, shot clock or periods, and out of bounds only with `#oob-<rate>`.
+  Play runs continuously.
 
 ## Licence
 

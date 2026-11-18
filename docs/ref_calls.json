@@ -1,0 +1,284 @@
+{
+ "version": 1,
+ "teams": {
+  "HAR": [
+   "red",
+   "Harbor"
+  ],
+  "MSA": [
+   "white",
+   "Mesa"
+  ]
+ },
+ "lines": {
+  "sideline": [
+   "sideline",
+   "side"
+  ],
+  "end_line": [
+   "baseline",
+   "end line"
+  ],
+  "half_court": [
+   "top",
+   "half court"
+  ]
+ },
+ "values": {
+  "1": "one",
+  "2": "two",
+  "3": "three"
+ },
+ "intents": {
+  "made_basket": {
+   "whistle": false,
+   "said": 0.85,
+   "phrases": [
+    [
+     "count it",
+     3
+    ],
+    [
+     "good, {value}",
+     3
+    ],
+    [
+     "that's {value}",
+     2
+    ],
+    [
+     "{value}, count it",
+     2
+    ],
+    [
+     "bucket, {value}",
+     1
+    ],
+    [
+     "good basket {team}",
+     1
+    ],
+    [
+     "{value} points {team}",
+     1
+    ],
+    [
+     "good",
+     1
+    ]
+   ]
+  },
+  "out_of_bounds": {
+   "whistle": true,
+   "said": 1,
+   "phrases": [
+    [
+     "{team} ball",
+     4
+    ],
+    [
+     "out of bounds, {team} ball",
+     3
+    ],
+    [
+     "out, {team} ball",
+     3
+    ],
+    [
+     "{team} ball, {line}",
+     2
+    ],
+    [
+     "off {other}, {team} ball",
+     2
+    ],
+    [
+     "off {other} {number}, {team} ball",
+     1
+    ],
+    [
+     "out on {other}",
+     1
+    ],
+    [
+     "ball goes {team}",
+     1
+    ]
+   ]
+  },
+  "play_on": {
+   "whistle": false,
+   "said": 0.5,
+   "phrases": [
+    [
+     "play on",
+     3
+    ],
+    [
+     "live ball",
+     3
+    ],
+    [
+     "it's live",
+     1
+    ],
+    [
+     "keep playing",
+     1
+    ]
+   ]
+  },
+  "check": {
+   "whistle": false,
+   "said": 0.6,
+   "phrases": [
+    [
+     "check",
+     3
+    ],
+    [
+     "check it up",
+     2
+    ],
+    [
+     "check ball",
+     1
+    ],
+    [
+     "ball's in",
+     1
+    ]
+   ]
+  },
+  "fifth_dribble": {
+   "whistle": true,
+   "said": 1,
+   "phrases": [
+    [
+     "five, turnover",
+     3
+    ],
+    [
+     "that's five, {team} ball",
+     2
+    ],
+    [
+     "fifth dribble, turnover",
+     2
+    ],
+    [
+     "five dribbles, {team} ball",
+     1
+    ],
+    [
+     "turnover, five",
+     1
+    ]
+   ]
+  },
+  "steal_turnover": {
+   "whistle": true,
+   "said": 0.9,
+   "phrases": [
+    [
+     "steal, {team} ball",
+     3
+    ],
+    [
+     "turnover, {team} ball, check it up",
+     2
+    ],
+    [
+     "swipe, {team} ball",
+     1
+    ],
+    [
+     "{team} ball, check it",
+     1
+    ]
+   ]
+  },
+  "score": {
+   "whistle": false,
+   "said": 0.7,
+   "phrases": [
+    [
+     "{hi} {lo}, {team}",
+     3
+    ],
+    [
+     "{team} {hi} {lo}",
+     2
+    ],
+    [
+     "{hi} to {lo}",
+     1
+    ]
+   ],
+   "tie": [
+    [
+     "{tie} all",
+     3
+    ],
+    [
+     "tied at {tie}",
+     1
+    ]
+   ]
+  }
+ },
+ "chatter": [
+  "watch the hands",
+  "talk to me",
+  "let's go",
+  "nice and clean",
+  "keep it moving",
+  "I got the line",
+  "I've got it",
+  "nothing there",
+  "good no call",
+  "stay down",
+  "easy now",
+  "hands off",
+  "watch your feet",
+  "he got ball"
+ ],
+ "near_miss": [
+  "red bench, sit down",
+  "white coach, stay in the box",
+  "no, play through that",
+  "clean ball",
+  "good defense",
+  "out of my way"
+ ],
+ "slips": {
+  "filler": [
+   "uh",
+   "um",
+   "yeah"
+  ],
+  "p_filler": 0.06,
+  "p_repeat": 0.05,
+  "p_drop": 0.03
+ },
+ "timing": {
+  "delay": [
+   0.3,
+   1.5
+  ],
+  "whistle_to_speech": [
+   0.4,
+   1
+  ],
+  "echo": 0.25,
+  "echo_after": [
+   0.3,
+   0.8
+  ],
+  "chatter_per_s": 0.05
+ },
+ "rate_wps": {
+  "REF-1": 2.8,
+  "REF-2": 3.3
+ }
+}
