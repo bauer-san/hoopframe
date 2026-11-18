@@ -329,7 +329,32 @@ The two officials talk, as if each wore a mic. Every call an official would make
 - **Live:** the call shows as a caption at the top of the program view; `#ref-voice` also speaks it with the browser's
   speech synthesis (live only, never recorded).
 - **Audio:** the mics' audio is rendered offline from a take's `ref_call` events, with gym noise, by
-  `tools/ref_audio.py`.
+  `tools/ref_audio.py` (below).
+
+### Referee mic audio
+
+`tools/ref_audio.py` renders the officials' mics for a take folder (`events.jsonl`, `groundtruth.jsonl`,
+`manifest.json`). The browser's speech synthesis cannot be recorded, so the script makes the speech itself.
+
+- **Output:** one 16 kHz mono WAV per official (`ref_REF-1.wav`, `ref_REF-2.wav`), with sample 0 at the take's frame 0.
+- **Record of the render:** `ref_audio.json` lists the voices, the SNR, and where each call actually landed. The spoken
+  length differs from the event's estimate.
+- **Speech:** a [Piper](https://github.com/rhasspy/piper) ONNX voice run with onnxruntime, phonemes from `espeak-ng`.
+  The multi-speaker LibriTTS voice (`voice-en-us-libritts-high` from Piper's v0.0.2 release; dataset CC BY 4.0) gives
+  each official a different speaker (`--speakers`).
+- **What each mic hears:**
+  - its official's whistle, very loud; the other official's voice and whistle, quieter and later;
+  - a crowd bed that rises after a made basket;
+  - sneaker squeaks and ball bounces from the ground truth, quieter with distance;
+  - the official's own footfalls and breath.
+- **Synthesized only:** every sound except the voice is generated; no recordings are used.
+- **Level:** `--snr` (default 10 dB) sets the speech over everything that is not a whistle, measured over the calls.
+
+```bash
+python tools/ref_audio.py <take> --voice en-us-libritts-high.onnx --snr 10 --seed 0
+```
+
+Needs Python with numpy, scipy and onnxruntime, and the `espeak-ng` program.
 
 ## Gym court and camera layout
 
