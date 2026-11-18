@@ -18,7 +18,7 @@ calls.
 
 Needs numpy, scipy, onnxruntime and the espeak-ng program. Synthesized sounds only; no recordings are used.
 
-  python tools/ref_audio.py <take folder> --voice en-us-libritts-high.onnx [--snr 10] [--seed 0] [--speakers 92,573]
+  python tools/ref_audio.py <take folder> --voice en-us-libritts-high.onnx [--snr 10] [--seed 0] [--speakers 0,350]
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ class PiperVoice:
         return list(", ".join(clauses).replace("‍", ""))
 
     def speak(self, text: str, speaker: int, length_scale: float = 1.0) -> np.ndarray:
-        ids = [*self.ids["^"]]
+        ids = [*self.ids["^"], *self.ids["_"]]                      # Piper: BOS, then a pad after every phoneme
         for ph in self.phonemes(text):
             if ph in self.ids:
                 ids += self.ids[ph] + self.ids["_"]
@@ -150,7 +150,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("take", type=Path)
     ap.add_argument("--voice", type=Path, required=True, help="Piper .onnx (its .onnx.json next to it)")
-    ap.add_argument("--speakers", default="92,573", help="speaker ids for REF-1,REF-2 (multi-speaker voices)")
+    ap.add_argument("--speakers", default="0,350", help="speaker ids for REF-1,REF-2 (multi-speaker voices)")
     ap.add_argument("--snr", type=float, default=10.0, help="speech over the gym and the other official, dB")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, help="default: the take folder")
