@@ -1521,7 +1521,7 @@ function sayNumber(n, digits = false) {
   if (digits) return `${ONES[Math.floor(n / 10)]}-${ONES[n % 10]}`;
   return TENS[Math.floor(n / 10)] + (n % 10 ? `-${ONES[n % 10]}` : '');
 }
-const REFC = { rng: mulberry32(SEED ^ 0x7ef5), queue: [], busyUntil: {}, nextChat: {}, shown: 0, voice: /(^#|&)ref-voice(&|$)/.test(location.hash) };
+const REFC = { rng: mulberry32(SEED ^ 0x7ef5), queue: [], busyUntil: {}, nextChat: {}, shown: 0, voice: /(^#|&)ref-voice(&|$)/.test(location.hash), speaking: 0, speakT: 0 };
 const rcRand = (a, b) => a + REFC.rng() * (b - a);
 const rcPick = (a) => a[(REFC.rng() * a.length) | 0];
 function rcWeighted(list) {
@@ -1634,10 +1634,22 @@ function refShow(c) {
   if (!el) return;
   el.hidden = false; el.textContent = `${c.ref === 'REF-1' ? 'Ref 1' : 'Ref 2'}: ${c.whistle !== null ? '(whistle) ' : ''}${c.text}`;
   clearTimeout(REFC.shown); REFC.shown = setTimeout(() => { el.hidden = true; }, 2200);
-  if (REFC.voice && window.speechSynthesis && speed === 1 && !REC.active && !paused) {
-    const u = new SpeechSynthesisUtterance(c.text); u.rate = c.ref === 'REF-1' ? 1.0 : 1.15; u.pitch = c.ref === 'REF-1' ? 0.8 : 1.05;
-    speechSynthesis.speak(u);
+  if (REFC.voice && window.speechSynthesis && speed === 1 && !REC.active && !paused) refSpeak(c);
+}
+// The browser has one speech queue for the page. An official's call goes first: the commentator's current line is cut
+// off (its own cancel would otherwise drop the call), and the commentator waits until the official has finished.
+function refSpeak(c) {
+  if (typeof CM !== 'undefined' && CM.current && CM.current.real) {
+    speechSynthesis.cancel(); CM.current.cut_off = true; CM.current = null;
   }
+  const u = new SpeechSynthesisUtterance(c.text);
+  const en = speechSynthesis.getVoices().filter((v) => /^en/i.test(v.lang));
+  const k = c.ref === 'REF-1' ? 1 : 2;                // the commentator uses the default voice
+  if (en.length > k) u.voice = en[k];
+  u.rate = c.ref === 'REF-1' ? 1.05 : 1.2; u.pitch = c.ref === 'REF-1' ? 0.75 : 1.1;
+  REFC.speaking += 1; REFC.speakT = performance.now();
+  u.onend = u.onerror = () => { REFC.speaking = Math.max(0, REFC.speaking - 1); };
+  speechSynthesis.speak(u);
 }
 
 // tip-off positions
@@ -3739,6 +3751,8 @@ function commentaryTick() {
 function cmLiveVoice() { return CM.opts.voice && !!window.speechSynthesis && speed === 1 && !REC.active && !paused; }
 function cmVoice(now) {
   const q = CM.queue;
+  if (REFC.speaking && performance.now() - REFC.speakT < 6000) return;   // an official is talking: wait
+  REFC.speaking = 0;
   let cur = CM.current;
   if (cur && !cur.real && now >= cur.end) cur = CM.current = null;
   if (cur && cur.real && cur.voice === undefined && now - cur.askedAt > 5) {   // speech never started: give up on it
