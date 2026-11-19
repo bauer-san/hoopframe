@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "teams": {
   "HAR": [
    "red",
@@ -65,6 +65,42 @@
     [
      "good",
      1
+    ],
+    [
+     "it's good",
+     1
+    ],
+    [
+     "basket counts",
+     1
+    ],
+    [
+     "counts, {value}",
+     1
+    ],
+    [
+     "yes, {value}",
+     1
+    ],
+    [
+     "good bucket",
+     1
+    ],
+    [
+     "that's good, {value}",
+     1
+    ],
+    [
+     "{value} for {team}",
+     1
+    ],
+    [
+     "score it, {value}",
+     1
+    ],
+    [
+     "count the basket",
+     1
     ]
    ]
   },
@@ -103,6 +139,42 @@
     [
      "ball goes {team}",
      1
+    ],
+    [
+     "last touch {other}, {team} ball",
+     1
+    ],
+    [
+     "ball is out, {team}",
+     1
+    ],
+    [
+     "that's out, {team} ball",
+     1
+    ],
+    [
+     "out, {team}",
+     1
+    ],
+    [
+     "going {team}",
+     1
+    ],
+    [
+     "{team} ball, {team} ball",
+     1
+    ],
+    [
+     "off {other}, out",
+     1
+    ],
+    [
+     "{line}, {team} ball",
+     1
+    ],
+    [
+     "ball out, going {team}",
+     1
     ]
    ]
   },
@@ -125,6 +197,18 @@
     [
      "keep playing",
      1
+    ],
+    [
+     "ball is live",
+     1
+    ],
+    [
+     "play it",
+     1
+    ],
+    [
+     "go, go, play on",
+     1
     ]
    ]
   },
@@ -146,6 +230,22 @@
     ],
     [
      "ball's in",
+     1
+    ],
+    [
+     "check it",
+     1
+    ],
+    [
+     "check up",
+     1
+    ],
+    [
+     "ball in",
+     1
+    ],
+    [
+     "check it, ball in",
      1
     ]
    ]
@@ -173,6 +273,22 @@
     [
      "turnover, five",
      1
+    ],
+    [
+     "too many dribbles",
+     1
+    ],
+    [
+     "that's five, turnover",
+     1
+    ],
+    [
+     "five, {team} ball",
+     1
+    ],
+    [
+     "dribble, five, turnover",
+     1
     ]
    ]
   },
@@ -195,6 +311,18 @@
     [
      "{team} ball, check it",
      1
+    ],
+    [
+     "turnover, {team} ball",
+     1
+    ],
+    [
+     "stolen, {team} ball",
+     1
+    ],
+    [
+     "swiped, check it up",
+     1
     ]
    ]
   },
@@ -213,6 +341,22 @@
     [
      "{hi} to {lo}",
      1
+    ],
+    [
+     "{hi} {lo}",
+     1
+    ],
+    [
+     "score {hi} {lo}",
+     1
+    ],
+    [
+     "{team} leads {hi} {lo}",
+     1
+    ],
+    [
+     "it's {hi} {lo}, {team}",
+     1
     ]
    ],
    "tie": [
@@ -222,6 +366,14 @@
     ],
     [
      "tied at {tie}",
+     1
+    ],
+    [
+     "{tie} {tie}",
+     1
+    ],
+    [
+     "all tied, {tie}",
      1
     ]
    ]
@@ -241,7 +393,33 @@
   "easy now",
   "hands off",
   "watch your feet",
-  "he got ball"
+  "he got ball",
+  "I see it",
+  "stay with it",
+  "all ball",
+  "no foul",
+  "that was clean",
+  "watch the push",
+  "arms down",
+  "keep your hands off",
+  "give him room",
+  "get up",
+  "are you alright",
+  "take your time",
+  "you okay",
+  "I had it",
+  "switch",
+  "I got the top",
+  "your side",
+  "my call",
+  "let it go",
+  "nope",
+  "play through",
+  "not yet",
+  "hold on",
+  "wait",
+  "coach, I hear you",
+  "water break"
  ],
  "near_miss": [
   "red bench, sit down",
@@ -249,7 +427,15 @@
   "no, play through that",
   "clean ball",
   "good defense",
-  "out of my way"
+  "out of my way",
+  "white shoes, red socks",
+  "check your shoe",
+  "that ball is flat",
+  "five more minutes",
+  "is it two or three",
+  "count your players",
+  "red, red, red",
+  "white jersey, tuck it in"
  ],
  "slips": {
   "filler": [
