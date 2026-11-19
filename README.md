@@ -293,6 +293,11 @@ and assists. Each event becomes a line spoken by one voice:
 
 - A shot gets a short call at the release ("Mesa 42 pulls up for three..."). The result line describes it:
   "Bang! Pull-up three from the top of the key, right over Harbor 3. Harbor 8, Mesa 5."
+- The colour goes in the result line, so calls during the play stay short. The opening words fit the shot ("From
+  way downtown... bang!" for a deep three, "Oh, what a shot!" over a tight contest). The narrator also keeps
+  track of its own calls to spot first baskets, ties, lead changes, runs of 6 or more unanswered points, the
+  basket that ends a run, and a player's third straight make. The score is said when one of those happens, and
+  otherwise every third basket. Phrases vary and the same one isn't picked twice running.
 - Results and steals come first, then shot calls and rebounds. Drives, passes and inbounds are said only when
   the voice is free, and a shot cuts them off. A line that waits too long is dropped. A miss and its rebound are
   said together.
