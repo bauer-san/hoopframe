@@ -3269,12 +3269,24 @@ class CmDetector {
 }
 
 class CmNarrator {
-  // minProb: identity probability needed to say a name; unsure: 'team' (say the team instead) or 'skip' (say nothing)
+  // minProb: identity probability needed to say a name; unsure: 'team' (say the team instead) or 'skip' (say nothing).
+  // Calls during the play stay short so they keep up with it; the colour goes in the result line, which may wait up to
+  // 4 s for the voice. The narrator remembers runs, lead changes and hot hands from its own detected events only.
   constructor(seed, minProb = 0.8, unsure = 'team') {
     this.rng = mulberry32(seed); this.shots = new Map(); this.minProb = minProb; this.unsure = unsure;
     this.named = []; this.withheld = 0; this.byTeam = 0;
+    this.last = new Map();                             // phrase list -> the phrase picked last time, so it isn't repeated
+    this.run = { team: null, pts: 0, other: 0 };       // unanswered points, and the other team's run they ended
+    this.hot = new Map();                              // track -> makes in a row
+    this.quiet = 0;                                    // made baskets since the score was last said
   }
-  pick(...o) { return o[Math.floor(this.rng() * o.length)]; }
+  pick(...o) {
+    const key = o.join('|'), prev = this.last.get(key);
+    const pool = o.length > 1 ? o.filter((x) => x !== prev) : o;
+    const x = pool[Math.floor(this.rng() * pool.length)];
+    this.last.set(key, x);
+    return x;
+  }
   who(p) {
     const id = !p ? null : typeof p === 'string' ? p : p.identity;
     if (!id) return 'someone';
@@ -3290,8 +3302,8 @@ class CmNarrator {
   }
   describe(e) {
     let s;
-    if (e.kind === 'layup') s = 'layup';
-    else if (e.kind === 'floater') s = 'floater in the lane';
+    if (e.kind === 'layup') s = this.pick('layup', 'finish at the rim', 'lay-in');
+    else if (e.kind === 'floater') s = this.pick('floater in the lane', 'runner in the lane', 'teardrop in the lane');
     else {
       const c = { 'catch-and-shoot': 'catch-and-shoot ', 'pull-up': 'pull-up ' }[e.creation] || '';
       s = `${c}${e.kind === 'three' ? 'three' : 'jumper'} from the ${e.spot}`;
@@ -3309,6 +3321,47 @@ class CmNarrator {
     if (text === null && ['shot', 'rebound', 'steal', 'drive', 'pass'].includes(e.type)) this.withheld++;
     return text;
   }
+  exclaim(shot) {                                      // the first words of a made basket
+    if (!shot) return this.pick('Good!', 'Scores!', 'Got it!');
+    const tight = shot.contest === 'very tightly contested';
+    if (tight && (shot.kind === 'layup' || shot.kind === 'floater')) return this.pick('Muscles it in!', 'Finishes through traffic!', 'Strong finish!');
+    if (tight) return this.pick('Oh, what a shot!', 'Are you kidding me!', 'Tough, tough shot... good!');
+    if (shot.kind === 'three' && shot.distance_m > 8.0) return this.pick('From way downtown... bang!', 'From the parking lot!', 'Deep, deep three... got it!');
+    if (shot.kind === 'three') return this.pick('Bang!', 'Splash!', 'From downtown!', 'Money!', 'Count it!', 'Bingo!');
+    if (shot.fading) return this.pick('The fadeaway drops!', 'Falling away... good!');
+    if (shot.transition) return this.pick('On the break, scores!', 'Easy deuce!', 'Off to the races!');
+    if (shot.kind === 'layup') return this.pick('Lays it in!', 'Finishes!', 'Scores!', 'In and out of traffic!');
+    if (shot.kind === 'floater') return this.pick('Drops it in!', 'Soft touch!', 'Good!');
+    return this.pick('Good!', 'Got it!', 'Knocks it down!', 'Scores!', 'Cash!');
+  }
+  miss(shot) {
+    if (shot && shot.contest === 'very tightly contested') return this.pick('Well defended. No good.', 'Bothered that one. Off.', 'Tough look. Misses.');
+    if (shot && shot.contest === 'wide open') return this.pick('Wide open... and misses!', 'Good look, no good.', "Couldn't convert.");
+    if (shot && shot.kind === 'layup') return this.pick("Can't finish!", 'Rolls off!', 'Off the rim.');
+    return this.pick('No good.', 'Off the rim.', 'Misses.', "Won't go.", 'Off the mark.', 'Rims out.');
+  }
+  // the score after a basket by team t worth pts: said when it matters, otherwise every third basket
+  scoreLine(score, t, pts) {
+    const T = CM_TEAM_NAME, o = Object.keys(score).find((k) => k !== t), us = score[t], them = score[o];
+    const before = us - pts, run = this.run;
+    if (run.team === t) run.pts += pts;
+    else { run.other = run.team ? run.pts : 0; run.team = t; run.pts = pts; }
+    let s = '', said = true;
+    if (us === them) s = this.pick(`All square at ${us}.`, `And we're tied at ${us}!`, `Tie game, ${us} apiece.`);
+    else if (before === 0 && them === 0) s = this.pick(`${T[t]} on the board first.`, `${T[t]} draws first blood.`);
+    else if (us > them && before <= them) s = this.pick(`And ${T[t]} takes the lead, ${us}-${them}!`, `${T[t]} in front, ${us}-${them}!`);
+    else if (run.pts >= 6) s = this.pick(`${T[t]} on a ${run.pts}-0 run!`, `That's ${run.pts} unanswered for ${T[t]}!`, `${run.pts}-0 run, ${T[t]}!`);
+    else if (run.other >= 6 && run.pts === pts) s = this.pick(`${T[t]} finally answers.`, `That stops the bleeding for ${T[t]}.`), said = false;
+    else said = false;
+    if (said && us !== them && them > 0 && !/\d+-\d+!$/.test(s)) s += ` ${T[us > them ? t : o]} ${Math.max(us, them)}, ${T[us > them ? o : t]} ${Math.min(us, them)}.`;
+    if (!said && ++this.quiet >= 3) {
+      said = true;
+      const lead = us > them ? t : o;
+      s += (s ? ' ' : '') + `${T[lead]} ${score[lead]}, ${T[lead === t ? o : t]} ${score[lead === t ? o : t]}.`;
+    }
+    if (said) this.quiet = 0;
+    return s;
+  }
   line_(e) {
     const t = e.type;
     if (t === 'shot') {
@@ -3316,37 +3369,45 @@ class CmNarrator {
       const who = this.subject(e.shooter);
       if (who === null) return null;
       let s;
-      if (e.kind === 'layup' || e.kind === 'floater') s = this.pick(`${who} to the rim`, `${who} goes up`);
+      if (e.kind === 'layup' || e.kind === 'floater') s = this.pick(`${who} to the rim`, `${who} goes up`, `${who} attacks the rim`, `${who} in the lane`);
       else if (e.creation === 'pull-up') s = `${who} pulls up` + (e.kind === 'three' ? ' for three' : '');
-      else s = e.kind === 'three' ? `${who} for three` : `${who} shoots`;
+      else if (e.kind === 'three') s = e.distance_m > 8.0 ? this.pick(`${who} from way out`, `${who} from deep`) : this.pick(`${who} for three`, `${who} lets it fly`, `${who} from three`);
+      else s = this.pick(`${who} shoots`, `${who} rises`, `${who} for the jumper`);
       if (e.contest === 'wide open') s += ', wide open';
       return s + '...';
     }
     if (t === 'shot_result') {
-      const shot = this.shots.get(e.shot_t);
-      if (!e.made) return this.pick('No good.', 'Off the rim.', 'Misses.');
-      let s = e.three ? this.pick('Bang!', 'Splash!', 'Got it!') : this.pick('Good!', 'Scores!', 'Got it!');
+      const shot = this.shots.get(e.shot_t), track = e.shooter && e.shooter.track;
+      if (!e.made) { this.hot.delete(track); return this.miss(shot); }
+      const streak = (this.hot.get(track) || 0) + 1;
+      this.hot.set(track, streak);
+      let s = this.exclaim(shot);
       const desc = shot ? this.describe(shot) : '';
       if (desc) s += ` ${desc[0].toUpperCase()}${desc.slice(1)}.`;
       const passer = e.assist ? this.name(e.assist) : null;
-      if (passer) s += ` ${this.pick('Feed from', 'Assist,', 'Set up by')} ${passer}.`;
-      const [a, b] = Object.entries(e.score).sort((x, y) => y[1] - x[1]);
-      s += a[1] !== b[1] ? ` ${CM_TEAM_NAME[a[0]]} ${a[1]}, ${CM_TEAM_NAME[b[0]]} ${b[1]}.` : ` All square at ${a[1]}.`;
+      if (passer) s += ` ${this.pick('Feed from', 'Assist,', 'Set up by', 'Dime from', 'Great look from')} ${passer}.`;
+      if (streak >= 3) s += ` ${this.pick(`That's ${streak} straight!`, `${streak} in a row, heating up!`, `Can't miss right now! ${streak} straight.`)}`;
+      const sc = this.scoreLine(e.score, e.shooter.team, e.points);
+      if (sc) s += ` ${sc}`;
       return s;
     }
     if (t === 'rebound') {
       const w = this.subject(e.player);
       if (w === null) return null;
-      return e.offensive ? this.pick(`Offensive board, ${w}!`, `${w} grabs the offensive rebound!`) : this.pick(`Rebound ${w}.`, `${w} cleans it up.`);
+      return e.offensive ? this.pick(`Offensive board, ${w}!`, `${w} grabs the offensive rebound!`, `${w} keeps it alive!`, `Second chance, ${w}!`)
+        : this.pick(`Rebound ${w}.`, `${w} cleans it up.`, `${w} hauls it in.`, `${w} with the board.`);
     }
-    if (t === 'steal') { const w = this.subject(e.player); return w === null ? null : `Picked off! ${w} with the steal.`; }
-    if (t === 'drive') { const w = this.subject(e.player); return w === null ? null : this.pick(`${w} attacks the basket`, `${w} drives`); }
+    if (t === 'steal') {
+      const w = this.subject(e.player);
+      return w === null ? null : this.pick(`Picked off! ${w} with the steal.`, `Stolen! ${w}!`, `${w} jumps the lane!`, `Ripped away by ${w}!`);
+    }
+    if (t === 'drive') { const w = this.subject(e.player); return w === null ? null : this.pick(`${w} attacks the basket`, `${w} drives`, `${w} puts it on the floor`, `${w} gets downhill`); }
     if (t === 'inbound') return `${CM_TEAM_NAME[e.player.team]} inbound.`;
     if (t === 'pass') {                                 // a pass to an uncertain player is not said
       const r = this.name(e.receiver);
       if (r === null) return null;
       const p = this.name(e.passer);
-      return p ? this.pick(`${p} to ${r}.`, `Swing to ${r}.`) : `Swing to ${r}.`;
+      return p ? this.pick(`${p} to ${r}.`, `Swing to ${r}.`, `Over to ${r}.`) : this.pick(`Swing to ${r}.`, `Over to ${r}.`);
     }
     return null;
   }
