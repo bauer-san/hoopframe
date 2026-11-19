@@ -352,6 +352,12 @@ The two officials talk, as if each wore a mic. Every call an official would make
   - the official's own footfalls and breath.
 - **Synthesized only:** every sound except the voice is generated; no recordings are used.
 - **Level:** `--snr` (default 10 dB) sets the speech over everything that is not a whistle, measured over the calls.
+- **Mic:** `--mic lapel` (the default) models a lavalier on the official's chest:
+  - the voice off-axis, its highs 4–12 dB down, with some chest resonance;
+  - its level moving ±5 dB as the head turns;
+  - the official's own clothing rustle, breath and the odd bump while running.
+
+  `--mic headset` leaves the voice as spoken.
 
 ```bash
 python tools/ref_audio.py <take> --voice en-us-libritts-high.onnx --snr 10 --seed 0

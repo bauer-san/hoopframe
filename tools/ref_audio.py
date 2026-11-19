@@ -14,7 +14,11 @@ Each mic hears, besides its official:
     from players changing speed, ball bounces (from the ground truth's ball), all quieter with distance from the mic;
   - the official's own running (footfalls) and breath.
 The gym's level is set so that the speech is --snr dB above everything that is not a whistle, measured over the
-calls.
+calls (before head turns).
+
+--mic lapel (the default) models a lavalier on the official's chest: the voice off-axis (highs down 4-12 dB, some
+chest resonance), its level moving +/- 5 dB as the head turns, and the official's own clothing rustle, breath and the
+odd bump while running. --mic headset leaves the voice as spoken.
 
 Needs numpy, scipy, onnxruntime and the espeak-ng program. Synthesized sounds only; no recordings are used.
 
@@ -108,6 +112,41 @@ def thump(rng, low=140.0, dur=0.12) -> np.ndarray:
     return x
 
 
+# ---------------------------------------------------------------- the lapel mic
+def lapel_color(x: np.ndarray, rng) -> np.ndarray:
+    """A lavalier on the chest: the mouth is off-axis and above it, so the voice loses its highs (a shelf above
+    about 3 kHz, 4-12 dB down) and gains some chest resonance (about 250 Hz)."""
+    hi_b, hi_a = signal.butter(2, 3000 / (SR / 2), "high")
+    hi = signal.lfilter(hi_b, hi_a, x)
+    y = x - hi + hi * 10 ** (-rng.uniform(4, 12) / 20)
+    pk_b, pk_a = signal.butter(1, [180 / (SR / 2), 350 / (SR / 2)], "band")
+    return y + 10 ** (rng.uniform(1, 5) / 20 - 1) * 3 * signal.lfilter(pk_b, pk_a, x)
+
+
+def head_turn(n: int, rng, db: float = 5.0) -> np.ndarray:
+    """Gain over time as the official turns their head away from the chest mic: a slow random curve, +/- `db`."""
+    k = max(n // (SR // 4) + 2, 2)
+    pts = np.cumsum(rng.normal(0, 0.35, k))
+    pts = (pts - pts.mean()) / (np.abs(pts - pts.mean()).max() + 1e-9) * db
+    return 10 ** (np.interp(np.arange(n), np.linspace(0, n, k), pts) / 20)
+
+
+def body_noise(speed: np.ndarray, rng) -> np.ndarray:
+    """What a lapel mic hears of the official's own body, per sample, from their running speed (m/s): clothing
+    rustle at the step rate, breath, and now and then a bump of the mic."""
+    n = len(speed)
+    run = np.clip((speed - 1.0) / 4.0, 0, 1)
+    t = np.arange(n) / SR
+    b, a = signal.butter(2, [1500 / (SR / 2), 6500 / (SR / 2)], "band")
+    rustle = signal.lfilter(b, a, rng.standard_normal(n)) * (0.5 + 0.5 * np.sin(2 * np.pi * 2.8 * t) ** 8)
+    b, a = signal.butter(2, [300 / (SR / 2), 2000 / (SR / 2)], "band")
+    breath = signal.lfilter(b, a, pink(n, rng)) * np.clip(np.sin(2 * np.pi * rng.uniform(0.4, 0.7) * t), 0, 1) ** 2
+    out = run * (0.25 * rustle + 0.15 * (0.4 + run) * breath)
+    for _ in range(rng.poisson(0.03 * n / SR)):                 # a bump: a hand, the shirt
+        place(out, thump(rng, 70, 0.1), rng.uniform(0, n / SR), rng.uniform(0.3, 1.0))
+    return out
+
+
 def place(buf: np.ndarray, x: np.ndarray, t: float, gain: float) -> None:
     i = int(round(t * SR))
     if i >= len(buf) or i + len(x) <= 0:
@@ -154,6 +193,8 @@ def main() -> None:
     ap.add_argument("--snr", type=float, default=10.0, help="speech over the gym and the other official, dB")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, help="default: the take folder")
+    ap.add_argument("--mic", default="lapel", choices=("lapel", "headset"),
+                    help="lapel (default): chest colour, head turns, the official's own rustle and breath; headset: none")
     a = ap.parse_args()
     out = a.out or a.take
     out.mkdir(parents=True, exist_ok=True)
@@ -178,6 +219,8 @@ def main() -> None:
     placed = []
     for c in calls:
         x = voice.speak(c["text"], spk[c["ref"]], pace[c["ref"]])
+        if a.mic == "lapel":
+            x = lapel_color(x, rng)
         x = x / (rms(x) + 1e-9) * 0.1
         t0 = c["t0"] - t_first
         place(speech[c["ref"]], x, t0, 1.0)
@@ -227,9 +270,17 @@ def main() -> None:
             if p1 and p0 and np.hypot(p1[0] - p0[0], p1[1] - p0[1]) * fps > 2.0 and k % 9 == 0:
                 place(steps, thump(rng, 90, 0.08), k / fps, 0.4)
         g += steps + 0.05 * pink(n, rng)
+        if a.mic == "lapel":                                      # the official's own body, at a chest mic
+            sp = np.zeros(len(pos))
+            for k in range(1, len(pos)):
+                p1, p0 = pos[k][0].get(r), pos[k - 1][0].get(r)
+                if p1 and p0:
+                    sp[k] = np.hypot(p1[0] - p0[0], p1[1] - p0[1]) * fps
+            sp = np.convolve(sp, np.ones(9) / 9, "same")
+            g += body_noise(np.interp(np.arange(n) / SR * fps, np.arange(len(pos)), sp), rng)
 
     # each mic: own speech + own whistle + the other official (voice and whistle) + the gym, at the asked SNR
-    meta = {"take": str(a.take), "sample_rate": SR, "t_frame0": t_first, "snr_db": a.snr, "seed": a.seed,
+    meta = {"take": str(a.take), "sample_rate": SR, "t_frame0": t_first, "snr_db": a.snr, "seed": a.seed, "mic": a.mic,
             "voice": {"model": a.voice.name, "speakers": spk, "length_scale": pace,
                       "license": "see the voice's MODEL_CARD (LibriTTS: CC BY 4.0)"},
             "calls": placed, "mics": {}}
@@ -250,7 +301,10 @@ def main() -> None:
         s_pow = rms(speech[r][active]) if active.any() else 0.1
         n_pow = rms(noise[active] if active.any() else noise)
         gain = s_pow / (n_pow + 1e-12) / 10 ** (a.snr / 20)
-        mix = speech[r] + whist[r] + gain * noise
+        own = speech[r] + whist[r]
+        if a.mic == "lapel":                                      # head turns move the voice and whistle, not the gym
+            own = own * head_turn(n, rng)
+        mix = own + gain * noise
         snr = 20 * np.log10(rms(speech[r][active]) / (rms((gain * noise)[active]) + 1e-12)) if active.any() else None
         peak = np.max(np.abs(mix)) + 1e-9
         mix = mix / peak * 0.9 if peak > 0.9 else mix
