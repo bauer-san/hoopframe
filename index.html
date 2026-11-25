@@ -382,7 +382,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
               <dt>&lt;prefix&gt;/players</dt><dd>All ten players with 3D keypoints</dd>
               <dt>&lt;prefix&gt;/player/&lt;id&gt;</dt><dd>One player, e.g. player/HAR-23</dd>
               <dt>&lt;prefix&gt;/camera/&lt;1–4&gt;</dt><dd>K, R, t calibration plus 2D boxes</dd>
-              <dt>&lt;prefix&gt;/radar/&lt;1–2&gt;</dt><dd>Radar detections and labelled truth (with #radar-commodity or #radar-imaging)</dd>
+              <dt>&lt;prefix&gt;/radar/&lt;1–2&gt;</dt><dd>Radar detections and labelled truth (with #radar, #radar-imaging or #radar-commodity in the URL)</dd>
               <dt>&lt;prefix&gt;/events</dt><dd>shot, shot_result, pass, catch, rebound, possession (QoS 1)</dd>
               <dt>&lt;prefix&gt;/recorder</dt><dd>Recording start and stop markers (QoS 1)</dd>
               <dt>&lt;prefix&gt;/status</dt><dd>Retained online flag and roster</dd>
@@ -2601,10 +2601,13 @@ function snapshot(frame, withAnnotations) {
 }
 
 /* =========================================================
-   Radar sensors: #radar-commodity or #radar-imaging in the URL
+   Radar sensors: #radar (or #radar-imaging) for 4D imaging radars, #radar-commodity for 60 GHz mmWave radars
    ---------------------------------------------------------
    Two radars, one on top of each backboard (centred, 8.4 cm in front of the glass, 4.05 m up: within 25 cm of the
-   gym layout's wide cameras), each aimed at centre court. Phase 1 model: one detection per object, as a radar's
+   gym layout's wide cameras), each looking straight down the court and tilted down by the angle that maximises the
+   players detected (measured over seeds 7 and 11, 300 s each, see README "Aim"): imaging 9.5° on both courts (the
+   beam's top edge reaches the far baseline and the far radar covers players under the near basket); commodity 48.5°
+   on the arena court and 30° on the gym court (its 25 m range and ±40° elevation favour seeing its own half). Phase 1 model: one detection per object, as a radar's
    detection and clustering stage reports it. A radar measures range, azimuth, elevation and radial speed (Doppler),
    not 3D velocity. Each frame it:
    - takes each player and referee at the middle of the torso and the ball at its centre, with their true velocity;
@@ -2628,29 +2631,33 @@ const RADAR_PROFILES = {
     model: 'Commodity 60 GHz mmWave', band_ghz: 60, range_resolution_m: 0.0375, max_range_m: 25,
     azimuth_fov_deg: 60, elevation_fov_deg: 40, azimuth_resolution_deg: 15, elevation_resolution_deg: 30,
     speed_resolution_mps: 0.1, max_speed_mps: 8, snr_1m2_at_10m_db: 33, threshold_db: 12, false_alarms_per_frame: 0.3,
+    tilt_deg: GYM ? 30 : 48.5,
   },
   imaging: {     // a cascaded 77 GHz 4D imaging radar, 12 transmit and 16 receive antennas, 2 GHz sweep
     model: '4D imaging 77 GHz', band_ghz: 77, range_resolution_m: 0.075, max_range_m: 60,
     azimuth_fov_deg: 60, elevation_fov_deg: 15, azimuth_resolution_deg: 1.5, elevation_resolution_deg: 3,
     speed_resolution_mps: 0.05, max_speed_mps: 20, snr_1m2_at_10m_db: 45, threshold_db: 12, false_alarms_per_frame: 1,
+    tilt_deg: 9.5,
   },
 };
 const RADAR_RCS_M2 = { person: 0.5, ball: 0.01 };
-const RADAR_KIND = (() => { const m = /(^#|&)radar-(\w+)(&|$)/.exec(location.hash); return m && RADAR_PROFILES[m[2]] ? m[2] : null; })();
+const RADAR_KIND = (() => { const m = /(^#|&)radar(?:-(\w+))?(&|$)/.exec(location.hash); return !m ? null : !m[2] ? 'imaging' : RADAR_PROFILES[m[2]] ? m[2] : null; })();
 const RADAR_MODEL_NOTE = 'One detection per object (torso centre of each player and referee, ball centre). Range, azimuth, elevation and radial speed with noise resolution / sqrt(2 SNR); SNR from the radar equation with RCS person 0.5 m², ball 0.01 m², -3 dB at the field-of-view edge, -20 dB when blocked by another body; detection probability 50 % at the threshold; objects unresolved in range (0.5 m), radial speed (0.5 m/s) and both angles (one resolution cell) merge; radial speed aliased beyond max_speed_mps; Poisson false alarms. Radar frame: x right, y forward (boresight), z up; azimuth = atan2(x, y), positive to the right; elevation positive up; radial speed positive moving away. No clutter or multipath.';
-function makeRadar(id, name, pos, target) {
-  const P = new THREE.Vector3(...pos), f = new THREE.Vector3(...target).sub(P).normalize();
+function makeRadar(id, name, pos, tiltDeg) {   // looks along the court toward centre court, tilted down by tiltDeg
+  const P = new THREE.Vector3(...pos), s = -Math.sign(pos[0]), t = (tiltDeg * Math.PI) / 180;
+  const target = [r4(pos[0] + (s * pos[1]) / Math.tan(t)), 0, 0];   // where the boresight meets the floor
+  const f = new THREE.Vector3(s * Math.cos(t), -Math.sin(t), 0);
   const right = new THREE.Vector3().crossVectors(f, UP).normalize(), up = new THREE.Vector3().crossVectors(right, f);
-  return { id, name, kind: RADAR_KIND, p: RADAR_PROFILES[RADAR_KIND], pos: P, right, fwd: f, up, target };
+  return { id, name, kind: RADAR_KIND, p: RADAR_PROFILES[RADAR_KIND], pos: P, right, fwd: f, up, target, tilt: tiltDeg };
 }
 const RADARS = RADAR_KIND ? [
-  makeRadar(1, 'Board +x', [r4(BB_X - 0.084), 4.05, 0], [0, 0, 0]),
-  makeRadar(2, 'Board -x', [r4(-(BB_X - 0.084)), 4.05, 0], [0, 0, 0]),
+  makeRadar(1, 'Board +x', [r4(BB_X - 0.084), 4.05, 0], RADAR_PROFILES[RADAR_KIND].tilt_deg),
+  makeRadar(2, 'Board -x', [r4(-(BB_X - 0.084)), 4.05, 0], RADAR_PROFILES[RADAR_KIND].tilt_deg),
 ] : [];
 function radarCalibration(rd) {
   const ax = [rd.right, rd.fwd, rd.up];
   return {
-    id: rd.id, name: rd.name, sensor: rd.kind, ...rd.p, position: v3(rd.pos), aimed_at: rd.target,
+    id: rd.id, name: rd.name, sensor: rd.kind, ...rd.p, position: v3(rd.pos), tilt_deg: rd.tilt, boresight_floor_point: rd.target,
     R_world_from_radar: [0, 1, 2].map((row) => ax.map((a) => r6(a.getComponent(row)))),   // columns: radar x (right), y (forward), z (up) in world
   };
 }

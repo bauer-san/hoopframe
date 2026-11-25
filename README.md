@@ -49,7 +49,7 @@ HTTPS, the broker must be `wss://`, because browsers block `ws://` from secure p
 | `hoopframe/player/<id>` | 0 | One player, e.g. `hoopframe/player/HAR-23` |
 | `hoopframe/referees` | 0 | Both referees: `id`, `track`, `role` (`lead`/`trail`), position, velocity, keypoints |
 | `hoopframe/camera/<1-4>` | 0 | Calibration `K`, `R`, `t` and, if enabled, 2D `annotations` |
-| `hoopframe/radar/<1-2>` | 0 | With `#radar-commodity` or `#radar-imaging`: one radar's `detections` and labelled `truth` (see [Radar sensors](#radar-sensors)) |
+| `hoopframe/radar/<1-2>` | 0 | With `#radar`, `#radar-imaging` or `#radar-commodity`: one radar's `detections` and labelled `truth` (see [Radar sensors](#radar-sensors)) |
 | `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `steal`, `possession`, `transition_start`, `transition_end`, `tipoff`, `recording_start`, `recording_stop` |
 | `hoopframe/recorder` | 1 | Recording start/stop markers with `take` and frame counts |
 | `hoopframe/status` | 1, retained | `online`, session, seed, roster, referees. A last-will message flips it to `online: false` |
@@ -285,24 +285,27 @@ returns to the layout's position.
 
 ## Radar sensors
 
-`#radar-commodity` or `#radar-imaging` in the URL (for example `#seed-123&court-gym&cams-gym&radar-commodity`) adds
-two radars, one on top of each backboard: centred, 8.4 cm in front of the glass and 4.05 m up, within 25 cm of the gym
-layout's wide cameras, each aimed at centre court. They are off by default. They change nothing in the game: the same
-seed gives the same game, event for event, with or without them.
+`#radar` or `#radar-imaging` in the URL (for example `#seed-123&court-gym&cams-gym&radar`) adds two 4D imaging
+radars; `#radar-commodity` adds two single-chip 60 GHz radars instead. There is one on top of each backboard: centred,
+8.4 cm in front of the glass and 4.05 m up, within 25 cm of the gym layout's wide cameras, looking straight down the
+court and tilted down by the angle that detects the most players (see [Aim](#aim)): 9.5° for `imaging` on both
+courts; 48.5° (arena) and 30° (gym) for `commodity`. They are off by default. They change nothing in the game: the
+same seed gives the same game, event for event, with or without them.
 
 A radar measures **range, azimuth, elevation and radial speed** (Doppler: the speed toward or away from it), not
 3D velocity. Both radars look along the court, so they measure motion along it well and sideways motion hardly at
 all; full velocity has to come from tracking positions over time.
 
-| | `commodity` | `imaging` |
+| | `imaging` | `commodity` |
 | --- | --- | --- |
-| Kind | Single-chip 60 GHz mmWave, 3 transmit × 4 receive antennas | Cascaded 77 GHz 4D imaging radar, 12 × 16 antennas |
-| Range resolution / maximum | 3.75 cm / 25 m | 7.5 cm / 60 m |
-| Field of view (azimuth, elevation) | ±60°, ±40° | ±60°, ±15° |
-| Angular resolution (azimuth, elevation) | 15°, 30° | 1.5°, 3° |
-| Radial speed resolution / unambiguous maximum | 0.1 m/s / ±8 m/s | 0.05 m/s / ±20 m/s |
-| SNR of 1 m² at 10 m / detection threshold | 33 dB / 12 dB | 45 dB / 12 dB |
-| False alarms per frame | 0.3 | 1 |
+| Kind | Cascaded 77 GHz 4D imaging radar, 12 transmit × 16 receive antennas | Single-chip 60 GHz mmWave, 3 transmit × 4 receive antennas |
+| Range resolution / maximum | 7.5 cm / 60 m | 3.75 cm / 25 m |
+| Field of view (azimuth, elevation) | ±60°, ±15° | ±60°, ±40° |
+| Angular resolution (azimuth, elevation) | 1.5°, 3° | 15°, 30° |
+| Radial speed resolution / unambiguous maximum | 0.05 m/s / ±20 m/s | 0.1 m/s / ±8 m/s |
+| SNR of 1 m² at 10 m / detection threshold | 45 dB / 12 dB | 33 dB / 12 dB |
+| False alarms per frame | 1 | 0.3 |
+| Tilt down (arena, gym) | 9.5°, 9.5° | 48.5°, 30° |
 
 The figures are typical of each class, not of a particular product. The model (phase 1: one detection per object,
 as a radar's detection and clustering stage reports it), each radar frame:
@@ -330,43 +333,75 @@ Its noise comes from a generator seeded by the seed, radar and frame, never the 
 give the same measurement, however often `snapshot()` is called.
 
 Each `groundtruth.jsonl` line (and `hoopframe/radar/<id>`) gets a `radars` array; `manifest.json`, the `status`
-message and `hoopframe.radars()` give each radar's placement and sensor figures, with `R_world_from_radar` (its
+message and `hoopframe.radars()` give each radar's placement, `tilt_deg` and sensor figures, with `R_world_from_radar` (its
 columns are the radar's x, y and z axes in world coordinates).
 
 ```jsonc
 // shape of one entry (values illustrative)
-{ "id": 1, "name": "Board +x", "sensor": "commodity", "frame": 812, "position": [13.021, 4.05, 0],
+{ "id": 1, "name": "Board +x", "sensor": "imaging", "frame": 812, "position": [13.021, 4.05, 0],
   "detections": [   // what the radar reports, sorted by range
-    { "range_m": 6.412, "azimuth_deg": -12.3, "elevation_deg": -19.8, "radial_speed_mps": -2.31, "snr_db": 33.1,
+    { "range_m": 6.412, "azimuth_deg": -12.3, "elevation_deg": -2.8, "radial_speed_mps": -2.31, "snr_db": 45.1,
       "position": [6.9, 1.9, -1.4],          // world coordinates computed from range and angles
       "sources": ["HAR-23", "ball"] } ],     // true sources; [] for a false alarm
   "truth": [        // every player, referee and the ball, in or out of view
     { "id": "HAR-23", "kind": "player", "position": [...], "velocity": [...], "range_m": 6.38, "azimuth_deg": -12.9,
-      "elevation_deg": -19.6, "radial_speed_mps": -2.27, "in_fov": true, "hidden": 0, "snr_db": 33.4, "detected": true } ] }
+      "elevation_deg": -2.6, "radial_speed_mps": -2.27, "in_fov": true, "hidden": 0, "snr_db": 45.4, "detected": true } ] }
 ```
 
 Radar axes: x right, y forward (along the boresight), z up. Azimuth is `atan2(x, y)`, positive to the right;
 elevation is positive up; radial speed is positive moving away.
 
-**Measured** over 300 s of seed 7 (3,000 frames per radar, both radars pooled). Errors are of single-source
-detections against the true point; median / 90th percentile.
+### Aim
 
-| Preset, court | Person in view at 0–5 m | Person detected (in view) | Person horizontal error at 10–15 m / 20–25 m | Person height error at 20–25 m | Ball detected (in view) at 5–10 m / 15–20 m | Merged detections |
+Each preset's tilt was chosen to detect as many players as possible. Aim changes only which objects fall inside the
+beam, not blocking or range, so each player's position and blocking were recorded every 0.2 s for 300 s of seeds 7
+and 11 on both courts, and the expected share of players detected by at least one radar was computed for every tilt
+from 0° to 60° in 0.25° steps. That calculation agrees with the simulation to within 0.1 point.
+
+| Preset, court | Aimed at centre court (17.3° arena, 23.3° gym) | Best tilt (range within 0.1 point of it) | Used |
+| --- | --- | --- | --- |
+| imaging, arena | 97.1 % | 9.5° (7.5–12.5°): 97.6 % | 9.5° |
+| imaging, gym | 97.0 % | 9.25° (2.75–18.25°): 99.7 % | 9.5° (99.7 %) |
+| commodity, arena | 81.7 % | 48.5°: 88.1 % | 48.5° |
+| commodity, gym | 98.6 % | 30.25° (24.75–38.5°): 98.7 % | 30° |
+
+The two seeds agree to within 1.25° for `imaging` and 3° for `commodity`.
+
+- `imaging`: at 9.5° the top of the beam reaches the far baseline, and players under the near basket (below the near
+  radar's beam, within about 6 m of it) are covered by the far radar, whose 60 m range spans the court. Aimed at
+  centre court, the gym radars tilted so far down that the lead referee on the far baseline was just above the beam
+  (by under 1.5°) while behind the near radar. The players still missed at 9.5° (2.5 % on the arena court) are all
+  blocked by other bodies for every radar that has them in view, so no aim can recover them.
+- `commodity`: with 25 m range, each radar mostly covers its own half, and tilting steeply widens its sideways reach
+  below it. On the arena court 12 % of player-frames are out of reach at any tilt: more than 60° to the side of the
+  near radar and more than 25 m from the far one; the referees on the sidelines are detected under half the time.
+  On the shorter gym court any tilt from 25° to 38° gives the same result. No single tilt suits both courts (46.25°
+  costs the gym half a point), so the tilt depends on the court.
+
+**Measured** with the simulation at the tilts used, 300 s of seed 7, both radars pooled, compared with the old
+centre-court aim. Errors are of single-source detections against the true point; median / 90th percentile.
+
+| Preset, court, aim | Players detected | Referees detected | Ball detected | Player horizontal error | Player height error | Merged detections |
 | --- | --- | --- | --- | --- | --- | --- |
-| commodity, arena | 53 % | 81–100 % | 0.17 / 0.52 m (p90 1.2 m) | 0.90 m (p90 2.3 m) | 71 % / 0 % | 7.0 % |
-| imaging, arena | 0 % | 94–100 % | 0.08 / 0.09 m | 0.08 m | 78 % / 56 % | 1.5 % |
-| commodity, gym | 65 % | 89–100 % | 0.18 / 0.47 m | 0.81 m | 76 % / 0 % | 6.9 % |
-| imaging, gym | 8 % | 99–100 % | 0.08 / 0.09 m | 0.08 m | 85 % / 46 % | 0.4 % |
+| imaging, arena, centre court | 97.0 % | 96.5 % | 37.3 % | 0.086 / 0.168 m | 0.068 / 0.177 m | 1.6 % |
+| imaging, arena, 9.5° | 97.5 % | 97.3 % | 35.0 % | 0.086 / 0.169 m | 0.069 / 0.179 m | 2.3 % |
+| imaging, gym, centre court | 97.4 % | 59.7 % | 53.6 % | 0.082 / 0.155 m | 0.059 / 0.148 m | 0.4 % |
+| imaging, gym, 9.5° | 99.7 % | 99.6 % | 71.3 % | 0.082 / 0.155 m | 0.060 / 0.148 m | 0.8 % |
+| commodity, arena, centre court | 81.7 % | 45.8 % | 38.2 % | 0.159 / 0.708 m | 0.162 / 1.263 m | 7.2 % |
+| commodity, arena, 48.5° | 87.6 % | 45.4 % | 42.1 % | 0.132 / 0.456 m | 0.118 / 0.870 m | 5.7 % |
+| commodity, gym, centre court | 98.8 % | 93.3 % | 50.8 % | 0.140 / 0.428 m | 0.135 / 0.700 m | 7.1 % |
+| commodity, gym, 30° | 98.9 % | 92.5 % | 51.6 % | 0.140 / 0.429 m | 0.135 / 0.716 m | 7.2 % |
 
-Range error is about 3.5 cm and radial speed error about 0.07 m/s for people with both presets (the body wander
-dominates). What this shows:
+"Detected" counts an object detected by at least one radar, merged or not. Range error is about 3.5 cm and radial
+speed error about 0.07 m/s for people with both presets (the body wander dominates). What this shows:
 
-- `commodity` gives range and radial speed well, but its coarse angles put people 0.5 m (horizontally) and 0.9 m
-  (in height) off at 20–25 m; height is barely measured. It sees the ball only within about 10 m.
-- `imaging` places people within about 10 cm everywhere it sees them, but its ±15° elevation misses most players
-  within 5 m of its own basket (they are below the beam). On the gym court, aiming at centre court tilts it down so
-  far that players near the far baseline are above the beam (in view 40 % at 20–25 m).
-- The ball is detected through passes and shots, but held it usually merges with its holder.
+- `imaging` places people within about 10 cm wherever it sees them; horizontal error grows only from 8 cm at 5–10 m
+  to 10 cm at 25–35 m.
+- `commodity` gives range and radial speed as well, but its coarse angles put people about 0.5 m (horizontally) and
+  0.9–1.0 m (in height) off at 20–25 m; height is barely measured. It sees the ball only within about 10 m, and fast
+  passes alias.
+- `imaging` detects the ball out to about 20 m (60–70 % of the time at 15–20 m), but held, the ball usually merges
+  with its holder. Its 9.5° tilt costs the arena court 2 points of ball detection and gains the gym court 18.
 
 ## Commentary
 
