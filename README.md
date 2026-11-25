@@ -7,6 +7,9 @@ multi-view player and referee tracking and shot attribution in two ways:
 - **Live feed over MQTT**: ball, player, referee and camera state, plus game events, published every tick.
 - **Synchronized recorder**: one MP4 per camera, frame-locked to per-frame ground truth, saved as a ZIP.
 
+Optionally, two simulated radars on top of the backboards add range, angle and radial-speed detections, labelled
+with their true sources (see [Radar sensors](#radar-sensors)).
+
 [![The gym's four fixed cameras recording the same 12 seconds of full-court play](docs/sample.gif)](docs/sample.mp4)
 
 *12 seconds from the built-in recorder on the gym court (`#court-gym&cams-gym`): the gym's four fixed cameras
@@ -46,6 +49,7 @@ HTTPS, the broker must be `wss://`, because browsers block `ws://` from secure p
 | `hoopframe/player/<id>` | 0 | One player, e.g. `hoopframe/player/HAR-23` |
 | `hoopframe/referees` | 0 | Both referees: `id`, `track`, `role` (`lead`/`trail`), position, velocity, keypoints |
 | `hoopframe/camera/<1-4>` | 0 | Calibration `K`, `R`, `t` and, if enabled, 2D `annotations` |
+| `hoopframe/radar/<1-2>` | 0 | With `#radar-commodity` or `#radar-imaging`: one radar's `detections` and labelled `truth` (see [Radar sensors](#radar-sensors)) |
 | `hoopframe/events` | 1 | `shot`, `shot_result`, `pass`, `catch`, `rebound`, `inbound`, `recover`, `steal`, `possession`, `transition_start`, `transition_end`, `tipoff`, `recording_start`, `recording_stop` |
 | `hoopframe/recorder` | 1 | Recording start/stop markers with `take` and frame counts |
 | `hoopframe/status` | 1, retained | `online`, session, seed, roster, referees. A last-will message flips it to `online: false` |
@@ -279,6 +283,91 @@ Two URL options, combined with `&` (and a seed: `#seed-123&court-gym&cams-gym`):
 The manifest's `court` block gives the court used (`name`, `length`, `width`, `lane_width`). **Reset this camera**
 returns to the layout's position.
 
+## Radar sensors
+
+`#radar-commodity` or `#radar-imaging` in the URL (for example `#seed-123&court-gym&cams-gym&radar-commodity`) adds
+two radars, one on top of each backboard: centred, 8.4 cm in front of the glass and 4.05 m up, within 25 cm of the gym
+layout's wide cameras, each aimed at centre court. They are off by default. They change nothing in the game: the same
+seed gives the same game, event for event, with or without them.
+
+A radar measures **range, azimuth, elevation and radial speed** (Doppler: the speed toward or away from it), not
+3D velocity. Both radars look along the court, so they measure motion along it well and sideways motion hardly at
+all; full velocity has to come from tracking positions over time.
+
+| | `commodity` | `imaging` |
+| --- | --- | --- |
+| Kind | Single-chip 60 GHz mmWave, 3 transmit × 4 receive antennas | Cascaded 77 GHz 4D imaging radar, 12 × 16 antennas |
+| Range resolution / maximum | 3.75 cm / 25 m | 7.5 cm / 60 m |
+| Field of view (azimuth, elevation) | ±60°, ±40° | ±60°, ±15° |
+| Angular resolution (azimuth, elevation) | 15°, 30° | 1.5°, 3° |
+| Radial speed resolution / unambiguous maximum | 0.1 m/s / ±8 m/s | 0.05 m/s / ±20 m/s |
+| SNR of 1 m² at 10 m / detection threshold | 33 dB / 12 dB | 45 dB / 12 dB |
+| False alarms per frame | 0.3 | 1 |
+
+The figures are typical of each class, not of a particular product. The model (phase 1: one detection per object,
+as a radar's detection and clustering stage reports it), each radar frame:
+
+- takes each player and referee at the middle of the torso (1.3 m × body scale) and the ball at its centre, with
+  their true velocity. The ball's velocity is measured from its motion every physics step, so it is known while
+  held and dribbled too;
+- keeps objects inside the field of view and maximum range;
+- computes the signal-to-noise ratio from the radar equation (falls as range⁴), the radar cross section (person
+  0.5 m², ball 0.01 m²), a 3 dB loss at the edge of the field of view and up to 20 dB when other bodies block the
+  line of sight (the fraction of torso, head and hips hidden);
+- detects the object with a probability of 50 % at the threshold, rising steeply above it;
+- adds noise of resolution / √(2 SNR) in each dimension and, for a person, the wander of the reflection over the
+  body (5 cm in range, 8 cm across, 0.1 m/s from arms and legs);
+- merges objects it cannot tell apart (within 0.5 m in range, 0.5 m/s in radial speed and one resolution cell in
+  both angles) into one power-weighted detection that lists every source. A held ball usually merges with its holder;
+- folds radial speeds beyond the unambiguous maximum back into range (Doppler aliasing: fast passes on `commodity`);
+- adds false alarms with `sources: []`.
+
+Not modelled yet: clutter from the floor, walls, hoop and stanchions, multipath, several points per body (arm and
+leg micro-Doppler), and the radar's own tracker.
+
+One radar frame is taken with every ground-truth line, so its rate is the MQTT rate or the recording frame rate.
+Its noise comes from a generator seeded by the seed, radar and frame, never the game's: the same seed and frame
+give the same measurement, however often `snapshot()` is called.
+
+Each `groundtruth.jsonl` line (and `hoopframe/radar/<id>`) gets a `radars` array; `manifest.json`, the `status`
+message and `hoopframe.radars()` give each radar's placement and sensor figures, with `R_world_from_radar` (its
+columns are the radar's x, y and z axes in world coordinates).
+
+```jsonc
+// shape of one entry (values illustrative)
+{ "id": 1, "name": "Board +x", "sensor": "commodity", "frame": 812, "position": [13.021, 4.05, 0],
+  "detections": [   // what the radar reports, sorted by range
+    { "range_m": 6.412, "azimuth_deg": -12.3, "elevation_deg": -19.8, "radial_speed_mps": -2.31, "snr_db": 33.1,
+      "position": [6.9, 1.9, -1.4],          // world coordinates computed from range and angles
+      "sources": ["HAR-23", "ball"] } ],     // true sources; [] for a false alarm
+  "truth": [        // every player, referee and the ball, in or out of view
+    { "id": "HAR-23", "kind": "player", "position": [...], "velocity": [...], "range_m": 6.38, "azimuth_deg": -12.9,
+      "elevation_deg": -19.6, "radial_speed_mps": -2.27, "in_fov": true, "hidden": 0, "snr_db": 33.4, "detected": true } ] }
+```
+
+Radar axes: x right, y forward (along the boresight), z up. Azimuth is `atan2(x, y)`, positive to the right;
+elevation is positive up; radial speed is positive moving away.
+
+**Measured** over 300 s of seed 7 (3,000 frames per radar, both radars pooled). Errors are of single-source
+detections against the true point; median / 90th percentile.
+
+| Preset, court | Person in view at 0–5 m | Person detected (in view) | Person horizontal error at 10–15 m / 20–25 m | Person height error at 20–25 m | Ball detected (in view) at 5–10 m / 15–20 m | Merged detections |
+| --- | --- | --- | --- | --- | --- | --- |
+| commodity, arena | 53 % | 81–100 % | 0.17 / 0.52 m (p90 1.2 m) | 0.90 m (p90 2.3 m) | 71 % / 0 % | 7.0 % |
+| imaging, arena | 0 % | 94–100 % | 0.08 / 0.09 m | 0.08 m | 78 % / 56 % | 1.5 % |
+| commodity, gym | 65 % | 89–100 % | 0.18 / 0.47 m | 0.81 m | 76 % / 0 % | 6.9 % |
+| imaging, gym | 8 % | 99–100 % | 0.08 / 0.09 m | 0.08 m | 85 % / 46 % | 0.4 % |
+
+Range error is about 3.5 cm and radial speed error about 0.07 m/s for people with both presets (the body wander
+dominates). What this shows:
+
+- `commodity` gives range and radial speed well, but its coarse angles put people 0.5 m (horizontally) and 0.9 m
+  (in height) off at 20–25 m; height is barely measured. It sees the ball only within about 10 m.
+- `imaging` places people within about 10 cm everywhere it sees them, but its ±15° elevation misses most players
+  within 5 m of its own basket (they are below the beam). On the gym court, aiming at centre court tilts it down so
+  far that players near the far baseline are above the beam (in view 40 % at 20–25 m).
+- The ball is detected through passes and shots, but held it usually merges with its holder.
+
 ## Commentary
 
 The **Commentary** tab calls the game live. It does this from tracker-style data only, as a test of play-by-play
@@ -363,7 +452,7 @@ second with animation. Poses at the seam then match an unbroken run to within a 
   rendered (see [Shutter and motion blur](#shutter-and-motion-blur)), but there is no lens distortion,
   rolling shutter or sensor noise, so expect a domain gap against real broadcast footage. The per-frame
   calibration and labels let you add those effects in post-processing.
-- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `snapshot()`, `events()`, `commentary()` and `profile()`
+- `window.hoopframe.advance(s)`, `advanceTo(t)`, `pose()`, `referees()`, `radars()`, `snapshot()`, `events()`, `commentary()` and `profile()`
   are test hooks for fast-forwarding, inspecting and timing the simulation. `snapshot()` returns the current
   ground-truth line. `events()` returns the events since its previous call; the first call starts the log.
   They do not render or record.

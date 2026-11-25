@@ -382,6 +382,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
               <dt>&lt;prefix&gt;/players</dt><dd>All ten players with 3D keypoints</dd>
               <dt>&lt;prefix&gt;/player/&lt;id&gt;</dt><dd>One player, e.g. player/HAR-23</dd>
               <dt>&lt;prefix&gt;/camera/&lt;1–4&gt;</dt><dd>K, R, t calibration plus 2D boxes</dd>
+              <dt>&lt;prefix&gt;/radar/&lt;1–2&gt;</dt><dd>Radar detections and labelled truth (with #radar-commodity or #radar-imaging)</dd>
               <dt>&lt;prefix&gt;/events</dt><dd>shot, shot_result, pass, catch, rebound, possession (QoS 1)</dd>
               <dt>&lt;prefix&gt;/recorder</dt><dd>Recording start and stop markers (QoS 1)</dd>
               <dt>&lt;prefix&gt;/status</dt><dd>Retained online flag and roster</dd>
@@ -1733,7 +1734,16 @@ function clampCourt(p) {
 }
 
 /* ---------- simulation step ---------- */
+// Every physics step also measures the ball's velocity from its displacement, so it is known while held or dribbled
+// (BALL.vel is only meaningful in flight). It only reads the state: the game is unchanged.
+const BALL_PREV = new THREE.Vector3(), BALL_VEL = new THREE.Vector3();
 function simStep(dt) {
+  BALL_PREV.copy(BALL.pos);
+  simStepGame(dt);
+  if (BALL.mode === 'free') BALL_VEL.copy(BALL.vel);
+  else if (BALL_PREV.distanceTo(BALL.pos) < 30 * dt) BALL_VEL.subVectors(BALL.pos, BALL_PREV).divideScalar(dt);   // skip teleports (inbounds)
+}
+function simStepGame(dt) {
   if (ONE) return simStep1v1(dt);
   GM.simTime += dt;
   for (const p of players) p.actT += dt;
@@ -2503,16 +2513,17 @@ function projectPt(cam, w, h, v, out) {
   out[1] = ((1 - tP.y) / 2) * h;
   return out;
 }
-function occluded(cam, point, selfPid) {
-  const dir = tR.subVectors(point, cam.position), dist = dir.length();
+function occluded(cam, point, selfPid) { return blockedFrom(cam.position, point, selfPid); }
+function blockedFrom(origin, point, selfPid) {   // is the line from origin to point blocked by another player's or referee's body?
+  const dir = tR.subVectors(point, origin), dist = dir.length();
   if (dist < 0.1) return false;
   dir.multiplyScalar(1 / dist);
-  ray.set(cam.position, dir);
+  ray.set(origin, dir);
   ray.near = 0; ray.far = dist - 0.06;
   for (const q of bodies) {
     if (q.idx === selfPid) continue;
     // cheap reject: closest approach of the ray to this player's body centre
-    const c = tC2.set(q.pos.x, q.jumpY + q.s, q.pos.z).sub(cam.position);
+    const c = tC2.set(q.pos.x, q.jumpY + q.s, q.pos.z).sub(origin);
     const along = c.dot(dir);
     if (along < -1.2 || along > ray.far + 1.2 || c.lengthSq() - along * along > 1.3 * 1.3) continue;
     if (ray.intersectObjects(q.rig.meshes, false).length) return true;
@@ -2585,6 +2596,135 @@ function snapshot(frame, withAnnotations) {
     players: players.map(playerState),
     referees: refs.map(refState),
     cameras: cams.map((_, i) => cameraState(i, withAnnotations)),
+    ...(RADARS.length ? { radars: RADARS.map((r) => radarFrame(r, frame)) } : {}),
+  };
+}
+
+/* =========================================================
+   Radar sensors: #radar-commodity or #radar-imaging in the URL
+   ---------------------------------------------------------
+   Two radars, one on top of each backboard (centred, 8.4 cm in front of the glass, 4.05 m up: within 25 cm of the
+   gym layout's wide cameras), each aimed at centre court. Phase 1 model: one detection per object, as a radar's
+   detection and clustering stage reports it. A radar measures range, azimuth, elevation and radial speed (Doppler),
+   not 3D velocity. Each frame it:
+   - takes each player and referee at the middle of the torso and the ball at its centre, with their true velocity;
+   - keeps what is inside its field of view and maximum range;
+   - works out the signal-to-noise ratio from the radar equation (falls as range^4), the object's radar cross
+     section (person 0.5 m², ball 0.01 m²), a 3 dB loss at the edge of the field of view and 20 dB when another
+     body blocks the line of sight (the fraction of torso, head and hips hidden);
+   - detects it with a probability rising from 50 % at the detection threshold;
+   - adds measurement noise of resolution / sqrt(2 SNR) in each dimension, plus for a person the wander of the
+     reflection over the body (5 cm in range, 8 cm across, 0.1 m/s from arms and legs);
+   - merges objects it cannot tell apart: within 0.5 m in range, 0.5 m/s in radial speed and one resolution cell in
+     both angles. The merged detection is the power-weighted mean and lists every source;
+   - folds radial speeds beyond the unambiguous maximum back into range (Doppler aliasing);
+   - adds false alarms (Poisson, sources []).
+   Not modelled: floor, wall, hoop and stanchion clutter, multipath, multiple points per body, the radar's own tracker.
+   Noise draws come from a generator seeded by (seed, radar, frame), never `rng`: the same seed and frame give the
+   same measurement, and the game is unchanged.
+   ========================================================= */
+const RADAR_PROFILES = {
+  commodity: {   // a single-chip 60 GHz sensor, 3 transmit and 4 receive antennas, 4 GHz sweep
+    model: 'Commodity 60 GHz mmWave', band_ghz: 60, range_resolution_m: 0.0375, max_range_m: 25,
+    azimuth_fov_deg: 60, elevation_fov_deg: 40, azimuth_resolution_deg: 15, elevation_resolution_deg: 30,
+    speed_resolution_mps: 0.1, max_speed_mps: 8, snr_1m2_at_10m_db: 33, threshold_db: 12, false_alarms_per_frame: 0.3,
+  },
+  imaging: {     // a cascaded 77 GHz 4D imaging radar, 12 transmit and 16 receive antennas, 2 GHz sweep
+    model: '4D imaging 77 GHz', band_ghz: 77, range_resolution_m: 0.075, max_range_m: 60,
+    azimuth_fov_deg: 60, elevation_fov_deg: 15, azimuth_resolution_deg: 1.5, elevation_resolution_deg: 3,
+    speed_resolution_mps: 0.05, max_speed_mps: 20, snr_1m2_at_10m_db: 45, threshold_db: 12, false_alarms_per_frame: 1,
+  },
+};
+const RADAR_RCS_M2 = { person: 0.5, ball: 0.01 };
+const RADAR_KIND = (() => { const m = /(^#|&)radar-(\w+)(&|$)/.exec(location.hash); return m && RADAR_PROFILES[m[2]] ? m[2] : null; })();
+const RADAR_MODEL_NOTE = 'One detection per object (torso centre of each player and referee, ball centre). Range, azimuth, elevation and radial speed with noise resolution / sqrt(2 SNR); SNR from the radar equation with RCS person 0.5 m², ball 0.01 m², -3 dB at the field-of-view edge, -20 dB when blocked by another body; detection probability 50 % at the threshold; objects unresolved in range (0.5 m), radial speed (0.5 m/s) and both angles (one resolution cell) merge; radial speed aliased beyond max_speed_mps; Poisson false alarms. Radar frame: x right, y forward (boresight), z up; azimuth = atan2(x, y), positive to the right; elevation positive up; radial speed positive moving away. No clutter or multipath.';
+function makeRadar(id, name, pos, target) {
+  const P = new THREE.Vector3(...pos), f = new THREE.Vector3(...target).sub(P).normalize();
+  const right = new THREE.Vector3().crossVectors(f, UP).normalize(), up = new THREE.Vector3().crossVectors(right, f);
+  return { id, name, kind: RADAR_KIND, p: RADAR_PROFILES[RADAR_KIND], pos: P, right, fwd: f, up, target };
+}
+const RADARS = RADAR_KIND ? [
+  makeRadar(1, 'Board +x', [r4(BB_X - 0.084), 4.05, 0], [0, 0, 0]),
+  makeRadar(2, 'Board -x', [r4(-(BB_X - 0.084)), 4.05, 0], [0, 0, 0]),
+] : [];
+function radarCalibration(rd) {
+  const ax = [rd.right, rd.fwd, rd.up];
+  return {
+    id: rd.id, name: rd.name, sensor: rd.kind, ...rd.p, position: v3(rd.pos), aimed_at: rd.target,
+    R_world_from_radar: [0, 1, 2].map((row) => ax.map((a) => r6(a.getComponent(row)))),   // columns: radar x (right), y (forward), z (up) in world
+  };
+}
+const tRd = new THREE.Vector3(), tRv = new THREE.Vector3(), tRh = new THREE.Vector3();
+function radarFrame(rd, frame) {
+  const P = rd.p, D = Math.PI / 180, deg = (a) => r4(a / D);
+  const rnd = mulberry32((SEED ^ Math.imul(frame + 1, 0x9E3779B1) ^ Math.imul(rd.id, 0x85EBCA77)) >>> 0);
+  rnd(); rnd();
+  const gn = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
+  const wrap = (v) => { const m = P.max_speed_mps; return ((((v + m) % (2 * m)) + 2 * m) % (2 * m)) - m; };
+  const local = (pt) => {
+    const d = tRd.subVectors(pt, rd.pos), x = d.dot(rd.right), y = d.dot(rd.fwd), z = d.dot(rd.up), range = d.length();
+    return { range, az: Math.atan2(x, y), el: Math.asin(clamp(z / range, -1, 1)), fwd: y };
+  };
+  const objs = [];
+  for (const b of bodies) {
+    const pt = new THREE.Vector3(b.pos.x, b.jumpY + 1.3 * b.s, b.pos.z);
+    const vel = new THREE.Vector3(b.move.x * b.speed, b.ref || b.onGround ? 0 : b.jumpV, b.move.y * b.speed);
+    objs.push({ id: b.id, kind: b.ref ? 'referee' : 'player', person: true, pt, vel, self: b.idx,
+      probes: [pt, tRh.set(b.pos.x, b.jumpY + 1.75 * b.s, b.pos.z).clone(), new THREE.Vector3(b.pos.x, b.jumpY + 0.95 * b.s, b.pos.z)] });
+  }
+  objs.push({ id: 'ball', kind: 'ball', person: false, pt: BALL.pos.clone(), vel: BALL_VEL.clone(), self: -1, probes: [BALL.pos] });
+  const hits = [];
+  const truth = objs.map((o) => {
+    const L = local(o.pt), vr = o.vel.dot(tRv.subVectors(o.pt, rd.pos).normalize());
+    const inFov = L.fwd > 0 && L.range <= P.max_range_m && Math.abs(L.az) <= P.azimuth_fov_deg * D && Math.abs(L.el) <= P.elevation_fov_deg * D;
+    const u = rnd();                                   // always drawn, so one object never shifts another's noise
+    const g = [gn(), gn(), gn(), gn()];
+    let hidden = 0, snr = null, detected = false;
+    if (inFov) {
+      hidden = o.probes.filter((q) => blockedFrom(rd.pos, q, o.self)).length / o.probes.length;
+      snr = P.snr_1m2_at_10m_db + 10 * Math.log10(RADAR_RCS_M2[o.person ? 'person' : 'ball']) - 40 * Math.log10(Math.max(L.range, 0.5) / 10)
+        - 3 * ((L.az / (P.azimuth_fov_deg * D)) ** 2 + (L.el / (P.elevation_fov_deg * D)) ** 2) - 20 * hidden;
+      if (u < 1 / (1 + Math.exp(-(snr - P.threshold_db) / 1.5))) {
+        const k = 1 / Math.sqrt(2 * 10 ** (snr / 10)), across = o.person ? 0.08 / L.range : 0;
+        hits.push({ o, L, vr, snr, lin: 10 ** (snr / 10),
+          r: L.range + g[0] * (P.range_resolution_m * k + (o.person ? 0.05 : 0)),
+          az: L.az + g[1] * (P.azimuth_resolution_deg * D * k + across),
+          el: L.el + g[2] * (P.elevation_resolution_deg * D * k + across),
+          v: vr + g[3] * (P.speed_resolution_mps * k + (o.person ? 0.1 : 0)) });
+        detected = true;
+      }
+    }
+    return { id: o.id, kind: o.kind, position: v3(o.pt), velocity: v3(o.vel), range_m: r4(L.range), azimuth_deg: deg(L.az), elevation_deg: deg(L.el),
+      radial_speed_mps: r4(vr), in_fov: inFov, hidden: r4(hidden), snr_db: snr === null ? null : r1(snr), detected };
+  });
+  // merge what the radar cannot resolve (decided on the true values, strongest first)
+  hits.sort((a, b) => b.snr - a.snr);
+  const clusters = [];
+  for (const h of hits) {
+    const c = clusters.find((c) => Math.abs(c[0].L.range - h.L.range) < 0.5 && Math.abs(c[0].vr - h.vr) < 0.5
+      && Math.abs(c[0].L.az - h.L.az) < P.azimuth_resolution_deg * D && Math.abs(c[0].L.el - h.L.el) < P.elevation_resolution_deg * D);
+    if (c) c.push(h); else clusters.push([h]);
+  }
+  const detections = clusters.map((c) => {
+    const w = c.reduce((a, h) => a + h.lin, 0), avg = (k) => c.reduce((a, h) => a + h[k] * h.lin, 0) / w;
+    return { r: avg('r'), az: avg('az'), el: avg('el'), v: wrap(avg('v')), snr: 10 * Math.log10(w), sources: c.map((h) => h.o.id) };
+  });
+  // false alarms
+  let n = 0;
+  for (let q = Math.exp(-P.false_alarms_per_frame), t = rnd(); t > q; t *= rnd()) n++;
+  for (let i = 0; i < n; i++) {
+    detections.push({ r: 1 + rnd() * (P.max_range_m - 1), az: (2 * rnd() - 1) * P.azimuth_fov_deg * D, el: (2 * rnd() - 1) * P.elevation_fov_deg * D,
+      v: (2 * rnd() - 1) * P.max_speed_mps, snr: P.threshold_db - 3 * Math.log(1 - rnd()), sources: [] });
+  }
+  detections.sort((a, b) => a.r - b.r);
+  return {
+    id: rd.id, name: rd.name, sensor: rd.kind, frame, position: v3(rd.pos),
+    detections: detections.map((d) => {
+      const ce = Math.cos(d.el), x = d.r * ce * Math.sin(d.az), y = d.r * ce * Math.cos(d.az), z = d.r * Math.sin(d.el);
+      const wp = rd.pos.clone().addScaledVector(rd.right, x).addScaledVector(rd.fwd, y).addScaledVector(rd.up, z);
+      return { range_m: r4(d.r), azimuth_deg: deg(d.az), elevation_deg: deg(d.el), radial_speed_mps: r4(d.v), snr_db: r1(d.snr), position: v3(wp), sources: d.sources };
+    }),
+    truth,
   };
 }
 
@@ -2598,6 +2738,7 @@ function statusPayload(online) {
     teams: TEAMS.map((t, ti) => ({ short: t.short, name: t.name, players: teamOf(ti).map((p) => p.id) })),
     referees: refs.map((r) => r.id),
     cameras: cams.map((c, i) => ({ id: i + 1, name: c.name })),
+    ...(RADARS.length ? { radars: RADARS.map(radarCalibration) } : {}),
   };
 }
 function mqttPub(t, obj, qos = 0) {
@@ -2614,6 +2755,7 @@ function mqttFrame(snap) {
   for (const pl of snap.players) mqttPub(`player/${pl.id}`, { ...head, ...pl });
   mqttPub('referees', { ...head, referees: snap.referees });
   for (const c of snap.cameras) mqttPub(`camera/${c.id}`, { ...head, ...c });
+  for (const r of snap.radars || []) mqttPub(`radar/${r.id}`, { ...head, ...r });
 }
 function mqttTick() {
   if (!MQ.client || !MQ.client.connected) return;
@@ -2868,6 +3010,7 @@ function manifest(frames, videoNames) {
     teams: TEAMS.map((t, ti) => ({ name: t.name, short: t.short, players: teamOf(ti).map((p) => ({ id: p.id, track: p.idx, number: p.num, height_m: r4(1.98 * p.s) })) })),
     cameras: REC.tracks.map((t, k) => ({ id: t.cam + 1, name: cams[t.cam].name, file: videoNames[k], width: t.w, height: t.h, codec: t.codec })),
     files: { groundtruth: 'groundtruth.jsonl', events: 'events.jsonl' },
+    ...(RADARS.length ? { radar_model: RADAR_MODEL_NOTE, radars: RADARS.map(radarCalibration) } : {}),
   };
 }
 async function recStop(err, internal) {
@@ -3666,6 +3809,7 @@ window.hoopframe = {
     return testState();
   },
   pose() { return players.map(playerState); },
+  radars() { return RADARS.map(radarCalibration); },   // radar placement and sensor model ([] unless #radar-... is set)
   referees() { return refs.map(refState); },
   snapshot(withAnnotations = true) { return snapshot(Math.floor(GM.simTime * MQ.rate), withAnnotations); },   // a groundtruth.jsonl line for now
   events() { const out = eventLog || []; eventLog = []; return out; },   // events since the last call (first call starts logging)
