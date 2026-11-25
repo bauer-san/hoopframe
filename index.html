@@ -2618,8 +2618,10 @@ function snapshot(frame, withAnnotations) {
    - detects it with a probability rising from 50 % at the detection threshold;
    - adds measurement noise of resolution / sqrt(2 SNR) in each dimension, plus for a person the wander of the
      reflection over the body (5 cm in range, 8 cm across, 0.1 m/s from arms and legs);
-   - merges objects it cannot tell apart: within 0.5 m in range, 0.5 m/s in radial speed and one resolution cell in
-     both angles. The merged detection is the power-weighted mean and lists every source;
+   - merges objects it cannot tell apart: within 0.5 m in range, 0.5 m/s in radial speed and, in both angles, one
+     resolution cell or a body width (0.5 m at their range), whichever is larger: bodies are not points, and two
+     people closer than that return one smeared reflection. The merged detection is the power-weighted mean and lists
+     every source;
    - folds radial speeds beyond the unambiguous maximum back into range (Doppler aliasing);
    - adds false alarms (Poisson, sources []).
    Not modelled: floor, wall, hoop and stanchion clutter, multipath, multiple points per body, the radar's own tracker.
@@ -2641,8 +2643,9 @@ const RADAR_PROFILES = {
   },
 };
 const RADAR_RCS_M2 = { person: 0.5, ball: 0.01 };
+const RADAR_MERGE_WIDTH_M = 0.5;   // objects closer than a body width across the line of sight return one smeared reflection
 const RADAR_KIND = (() => { const m = /(^#|&)radar(?:-(\w+))?(&|$)/.exec(location.hash); return !m ? null : !m[2] ? 'imaging' : RADAR_PROFILES[m[2]] ? m[2] : null; })();
-const RADAR_MODEL_NOTE = 'One detection per object (torso centre of each player and referee, ball centre). Range, azimuth, elevation and radial speed with noise resolution / sqrt(2 SNR); SNR from the radar equation with RCS person 0.5 m², ball 0.01 m², -3 dB at the field-of-view edge, -20 dB when blocked by another body; detection probability 50 % at the threshold; objects unresolved in range (0.5 m), radial speed (0.5 m/s) and both angles (one resolution cell) merge; radial speed aliased beyond max_speed_mps; Poisson false alarms. Radar frame: x right, y forward (boresight), z up; azimuth = atan2(x, y), positive to the right; elevation positive up; radial speed positive moving away. No clutter or multipath.';
+const RADAR_MODEL_NOTE = 'One detection per object (torso centre of each player and referee, ball centre). Range, azimuth, elevation and radial speed with noise resolution / sqrt(2 SNR); SNR from the radar equation with RCS person 0.5 m², ball 0.01 m², -3 dB at the field-of-view edge, -20 dB when blocked by another body; detection probability 50 % at the threshold; objects unresolved in range (0.5 m), radial speed (0.5 m/s) and both angles (one resolution cell or 0.5 m across, whichever is larger) merge; radial speed aliased beyond max_speed_mps; Poisson false alarms. Radar frame: x right, y forward (boresight), z up; azimuth = atan2(x, y), positive to the right; elevation positive up; radial speed positive moving away. No clutter or multipath.';
 function makeRadar(id, name, pos, tiltDeg) {   // looks along the court toward centre court, tilted down by tiltDeg
   const P = new THREE.Vector3(...pos), s = -Math.sign(pos[0]), t = (tiltDeg * Math.PI) / 180;
   const target = [r4(pos[0] + (s * pos[1]) / Math.tan(t)), 0, 0];   // where the boresight meets the floor
@@ -2708,8 +2711,12 @@ function radarFrame(rd, frame) {
   hits.sort((a, b) => b.snr - a.snr);
   const clusters = [];
   for (const h of hits) {
-    const c = clusters.find((c) => Math.abs(c[0].L.range - h.L.range) < 0.5 && Math.abs(c[0].vr - h.vr) < 0.5
-      && Math.abs(c[0].L.az - h.L.az) < P.azimuth_resolution_deg * D && Math.abs(c[0].L.el - h.L.el) < P.elevation_resolution_deg * D);
+    const c = clusters.find((c) => {
+      const width = RADAR_MERGE_WIDTH_M / Math.max(Math.min(c[0].L.range, h.L.range), 0.5);   // a body width, as an angle
+      return Math.abs(c[0].L.range - h.L.range) < 0.5 && Math.abs(c[0].vr - h.vr) < 0.5
+        && Math.abs(c[0].L.az - h.L.az) < Math.max(P.azimuth_resolution_deg * D, width)
+        && Math.abs(c[0].L.el - h.L.el) < Math.max(P.elevation_resolution_deg * D, width);
+    });
     if (c) c.push(h); else clusters.push([h]);
   }
   const detections = clusters.map((c) => {

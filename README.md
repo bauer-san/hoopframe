@@ -320,8 +320,10 @@ as a radar's detection and clustering stage reports it), each radar frame:
 - detects the object with a probability of 50 % at the threshold, rising steeply above it;
 - adds noise of resolution / √(2 SNR) in each dimension and, for a person, the wander of the reflection over the
   body (5 cm in range, 8 cm across, 0.1 m/s from arms and legs);
-- merges objects it cannot tell apart (within 0.5 m in range, 0.5 m/s in radial speed and one resolution cell in
-  both angles) into one power-weighted detection that lists every source. A held ball usually merges with its holder;
+- merges objects it cannot tell apart (within 0.5 m in range, 0.5 m/s in radial speed and, in both angles, one
+  resolution cell or a body width of 0.5 m at their range, whichever is larger) into one power-weighted detection that
+  lists every source. Bodies are not points: two people closer than a body width return one smeared reflection however
+  fine the radar's angles. A held ball usually merges with its holder;
 - folds radial speeds beyond the unambiguous maximum back into range (Doppler aliasing: fast passes on `commodity`);
 - adds false alarms with `sources: []`.
 
@@ -384,15 +386,17 @@ centre-court aim. Errors are of single-source detections against the true point;
 | Preset, court, aim | Players detected | Referees detected | Ball detected | Player horizontal error | Player height error | Merged detections |
 | --- | --- | --- | --- | --- | --- | --- |
 | imaging, arena, centre court | 97.0 % | 96.5 % | 37.3 % | 0.086 / 0.168 m | 0.068 / 0.177 m | 1.6 % |
-| imaging, arena, 9.5° | 97.5 % | 97.3 % | 35.0 % | 0.086 / 0.169 m | 0.069 / 0.179 m | 2.3 % |
+| imaging, arena, 9.5° | 97.5 % | 97.3 % | 35.0 % | 0.086 / 0.169 m | 0.069 / 0.179 m | 2.6 % |
 | imaging, gym, centre court | 97.4 % | 59.7 % | 53.6 % | 0.082 / 0.155 m | 0.059 / 0.148 m | 0.4 % |
-| imaging, gym, 9.5° | 99.7 % | 99.6 % | 71.3 % | 0.082 / 0.155 m | 0.060 / 0.148 m | 0.8 % |
+| imaging, gym, 9.5° | 99.7 % | 99.6 % | 71.3 % | 0.082 / 0.156 m | 0.060 / 0.148 m | 1.4 % |
 | commodity, arena, centre court | 81.7 % | 45.8 % | 38.2 % | 0.159 / 0.708 m | 0.162 / 1.263 m | 7.2 % |
 | commodity, arena, 48.5° | 87.6 % | 45.4 % | 42.1 % | 0.132 / 0.456 m | 0.118 / 0.870 m | 5.7 % |
 | commodity, gym, centre court | 98.8 % | 93.3 % | 50.8 % | 0.140 / 0.428 m | 0.135 / 0.700 m | 7.1 % |
 | commodity, gym, 30° | 98.9 % | 92.5 % | 51.6 % | 0.140 / 0.429 m | 0.135 / 0.716 m | 7.2 % |
 
-"Detected" counts an object detected by at least one radar, merged or not. Range error is about 3.5 cm and radial
+"Detected" counts an object detected by at least one radar, merged or not. The centre-court rows were measured
+before objects closer than a body width were merged; that rule raises `imaging`'s merged detections (from 2.3 % to
+2.6 % on the arena court and 0.8 % to 1.4 % on the gym court at 9.5°) and changes nothing else in the table. Range error is about 3.5 cm and radial
 speed error about 0.07 m/s for people with both presets (the body wander dominates). What this shows:
 
 - `imaging` places people within about 10 cm wherever it sees them; horizontal error grows only from 8 cm at 5–10 m
