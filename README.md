@@ -15,6 +15,10 @@ seed `20261111`, simulation time 84.5–96.5 s. HAR-3 scores at the +x end; MSA 
 the floor in transition and MSA-0 scores at the −x end, with both referees switching ends.
 Click for the [full-quality MP4](docs/sample.mp4).*
 
+**Live site: <https://bauer-san.github.io/hoopframe/>** (GitHub Pages; URL options go after `#`, for example
+<https://bauer-san.github.io/hoopframe/#seed-1&court-gym&cams-gym>). The site is served over HTTPS, so the MQTT
+broker must be `wss://`.
+
 Everything is in `index.html`. Open it directly in **Chrome or Edge**: double-click it, or serve the folder with
 `python3 -m http.server`. The hosted artifact preview blocks network connections and downloads, so MQTT
 and recording only work from this file.
