@@ -1,6 +1,6 @@
 # Hoopframe
 
-**[Live demo](https://bauer-san.github.io/hoopframe/)**: runs in the browser (Chrome or Edge), nothing to install.
+**[Live demo](https://bauer-san.github.io/hoopframe/#court-gym&cams-gym&ref-voice)**: runs in the browser (Chrome or Edge), nothing to install.
 
 Synthetic 5-on-5 full-court basketball with two referees and four configurable cameras. Possession changes ends
 after every score and defensive rebound, with transition runs up the floor. It produces ground truth for
